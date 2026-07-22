@@ -317,11 +317,11 @@ local string parname(string arg)
     if (*ap == '<' || *ap == '>')
         ap++;
     strncpy(namebuf, ap, 63);
-    namebuf[63] = NULL;
+    namebuf[63] = '\0';
     ep = strchr(namebuf, '=');
     if (ep == NULL)                             /* not of form name=value?  */
         return (NULL);
-    *ep = NULL;
+    *ep = '\0';
     return (namebuf);
 }
 

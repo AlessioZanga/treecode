@@ -5,6 +5,7 @@
 
 #include "stdinc.h"
 #include "getparam.h"
+#include <unistd.h>
 #include <sys/types.h>
 #include <sys/times.h>
 #include <sys/param.h>
@@ -78,15 +79,15 @@ bool scanopt(string opt, string key)
     char *op, *kp;
 
     op = (char *) opt;                  /* start scan of option strings     */
-    while (*op != NULL) {               /* loop while words left to check   */
+    while (*op != '\0') {               /* loop while words left to check   */
         kp = key;                       /* (re)start scan of key word       */
-        while ((*op != ',' ? *op : (char) NULL) == *kp) {
+        while ((*op != ',' ? *op : '\0') == *kp) {
                                         /* char by char, compare word, key  */
-            if (*kp++ == NULL)          /* reached end of key word, so...   */
+            if (*kp++ == '\0')          /* reached end of key word, so...   */
                 return (TRUE);          /* indicate success                 */
             op++;                       /* else go on to next char          */
         }
-        while (*op != NULL && *op++ != ',')
+        while (*op != '\0' && *op++ != ',')
                                         /* scan for start of next word      */
             continue;
     }
