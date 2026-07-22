@@ -54,5 +54,6 @@ dkms.conf
 # debug information files
 *.dwo
 
-# Executable
-treecode
+# Added by cargo
+
+/target
