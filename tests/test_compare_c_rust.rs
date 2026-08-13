@@ -39,7 +39,7 @@ fn run_rust(dir: &Path, args: &[&str]) -> String {
     let mut full: Vec<String> = vec!["treecode".to_string()];
     full.extend(args.iter().map(|s| s.to_string()));
     let refs: Vec<&str> = full.iter().map(|s| s.as_str()).collect();
-    treecode::treecode::run(&refs);
+    treecode::treecode::run(&refs).unwrap();
     unsafe {
         libc::dup2(saved, STDOUT_FD);
         libc::close(saved);

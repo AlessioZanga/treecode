@@ -1,5 +1,7 @@
 pub type Real = f32;
 
+use crate::types::Vector;
+
 pub fn rsqr(x: Real) -> Real {
     x * x
 }
@@ -46,7 +48,7 @@ pub fn grandom(mean: f64, sdev: f64) -> f64 {
     mean + sdev * v1 * (-2.0 * s.ln() / s).sqrt()
 }
 
-pub fn pickshell(vec: &mut [Real], ndim: usize, rad: Real) {
+pub fn pickshell(vec: &mut Vector, ndim: usize, rad: Real) {
     loop {
         let mut rsq: Real = 0.0;
         for v in vec.iter_mut().take(ndim) {
@@ -63,7 +65,7 @@ pub fn pickshell(vec: &mut [Real], ndim: usize, rad: Real) {
     }
 }
 
-pub fn pickball(vec: &mut [Real], ndim: usize, rad: Real) {
+pub fn pickball(vec: &mut Vector, ndim: usize, rad: Real) {
     loop {
         let mut rsq: Real = 0.0;
         for v in vec.iter_mut().take(ndim) {
@@ -79,7 +81,7 @@ pub fn pickball(vec: &mut [Real], ndim: usize, rad: Real) {
     }
 }
 
-pub fn pickbox(vec: &mut [Real], ndim: usize, size: Real) {
+pub fn pickbox(vec: &mut Vector, ndim: usize, size: Real) {
     for v in vec.iter_mut().take(ndim) {
         *v = xrandom(-(size as f64), size as f64) as Real;
     }

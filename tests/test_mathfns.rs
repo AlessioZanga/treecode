@@ -1,5 +1,6 @@
 use approx::assert_relative_eq;
-use treecode::{mathfns, types};
+use treecode::mathfns;
+use treecode::types::{scanopt, Vector};
 
 #[test]
 fn test_rsqr() {
@@ -81,7 +82,7 @@ fn test_grandom_distribution() {
 
 #[test]
 fn test_pickshell_in_range() {
-    let mut vec = [0.0f32; 3];
+    let mut vec = Vector::zero();
     for _ in 0..100 {
         mathfns::pickshell(&mut vec, 3, 1.0);
         let r: f32 = vec.iter().map(|x| x * x).sum();
@@ -91,7 +92,7 @@ fn test_pickshell_in_range() {
 
 #[test]
 fn test_pickball_in_range() {
-    let mut vec = [0.0f32; 3];
+    let mut vec = Vector::zero();
     for _ in 0..100 {
         mathfns::pickball(&mut vec, 3, 1.0);
         let r: f32 = vec.iter().map(|x| x * x).sum();
@@ -101,7 +102,7 @@ fn test_pickball_in_range() {
 
 #[test]
 fn test_pickbox_in_range() {
-    let mut vec = [0.0f32; 3];
+    let mut vec = Vector::zero();
     for _ in 0..100 {
         mathfns::pickbox(&mut vec, 3, 1.0);
         for v in &vec {
@@ -112,20 +113,20 @@ fn test_pickbox_in_range() {
 
 #[test]
 fn test_scanopt_found() {
-    assert!(types::scanopt("a,b,c", "a"));
-    assert!(types::scanopt("a,b,c", "b"));
-    assert!(types::scanopt("a,b,c", "c"));
+    assert!(scanopt("a,b,c", "a"));
+    assert!(scanopt("a,b,c", "b"));
+    assert!(scanopt("a,b,c", "c"));
 }
 
 #[test]
 fn test_scanopt_not_found() {
-    assert!(!types::scanopt("a,b,c", "d"));
-    assert!(!types::scanopt("a,b,c", "ab"));
-    assert!(!types::scanopt("a,b,c", ""));
+    assert!(!scanopt("a,b,c", "d"));
+    assert!(!scanopt("a,b,c", "ab"));
+    assert!(!scanopt("a,b,c", ""));
 }
 
 #[test]
 fn test_scanopt_single() {
-    assert!(types::scanopt("only", "only"));
-    assert!(!types::scanopt("only", "two"));
+    assert!(scanopt("only", "only"));
+    assert!(!scanopt("only", "two"));
 }

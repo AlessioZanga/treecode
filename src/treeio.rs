@@ -4,7 +4,15 @@ use std::ffi::CStr;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::os::raw::c_char;
 
-use crate::types;
+use crate::error::Result;
+use crate::error::TreeError;
+use crate::getparam;
+use crate::types::{
+    actmax, allocate, bodytab, cpuforce, cputime, dtime, dtout, eps, headline, infile, matrix_zero,
+    nbbcalc, nbccalc, nbody, ncell, nstep, options, outfile, rsize, savefile, scanopt, tdepth,
+    theta, tnow, tout, tstop, usequad, vector_zero, Body, Real, Vector, AMVEC, BODY, CMPOS, CMVEL,
+    ETOT, KETEN, MTOT, NDIM, PETEN,
+};
 
 const E_WIDTH: usize = 14;
 
@@ -16,23 +24,23 @@ fn c_str_to_string(ptr: *const c_char) -> String {
 }
 
 fn getargv0() -> String {
-    crate::getparam::getparam("argv0")
+    getparam::getparam("argv0").unwrap()
 }
 
 fn getversion() -> String {
-    crate::getparam::getparam("VERSION")
+    getparam::getparam("VERSION").unwrap()
 }
 
-fn alloc_c_string(s: &str) -> *mut c_char {
-    let p = crate::types::allocate(s.len() + 1);
+fn alloc_c_string(s: &str) -> Result<*mut c_char> {
+    let p = allocate(s.len() + 1)?;
     unsafe {
         std::ptr::copy_nonoverlapping(s.as_ptr(), p, s.len());
         *p.add(s.len()) = 0;
     }
-    p as *mut c_char
+    Ok(p as *mut c_char)
 }
 
-fn fmt_e14(v: types::Real) -> String {
+fn fmt_e14(v: Real) -> String {
     let s = format!("{:.7E}", v);
     let (mant, exp) = s.split_once('E').unwrap_or((&s, "0"));
     let exp: i32 = exp.parse().unwrap_or(0);
@@ -46,95 +54,80 @@ fn fmt_e14(v: types::Real) -> String {
     out
 }
 
-pub fn inputdata() {
-    let toks = read_input_tokens();
+pub fn inputdata() -> Result<()> {
+    let toks = read_input_tokens()?;
     let mut i = 0usize;
 
-    let nbody = parse_i32(&toks, &mut i);
-    if nbody < 1 {
-        crate::types::error(&format!("inputdata: nbody = {} is absurd\n", nbody));
+    let nb = parse_i32(&toks, &mut i)?;
+    if nb < 1 {
+        return Err(TreeError::AbsurdNbody(nb));
     }
-    let ndim = parse_i32(&toks, &mut i);
-    if ndim != types::NDIM as i32 {
-        crate::types::error(&format!(
-            "inputdata: ndim = {}; expected {}\n",
-            ndim,
-            types::NDIM
-        ));
+    let ndim = parse_i32(&toks, &mut i)?;
+    if ndim != NDIM as i32 {
+        return Err(TreeError::BadNdim {
+            got: ndim,
+            expected: NDIM,
+        });
     }
-    let tnow = parse_f64(&toks, &mut i) as types::Real;
+    let t = parse_f64(&toks, &mut i)? as Real;
 
     unsafe {
-        types::tnow = tnow;
-        types::nbody = nbody;
-        types::bodytab = crate::types::allocate(nbody as usize * std::mem::size_of::<types::Body>())
-            as *mut types::Body;
+        tnow = t;
+        nbody = nb;
+        bodytab = allocate(nb as usize * std::mem::size_of::<Body>())? as *mut Body;
 
-        for j in 0..nbody as usize {
-            let p = &mut *types::bodytab.add(j);
-            p.bodynode.mass = parse_f64(&toks, &mut i) as types::Real;
+        for j in 0..nb as usize {
+            let p = &mut *bodytab.add(j);
+            p.bodynode.mass = parse_f64(&toks, &mut i)? as Real;
         }
-        for j in 0..nbody as usize {
-            let p = &mut *types::bodytab.add(j);
-            for k in 0..types::NDIM {
-                p.bodynode.pos[k] = parse_f64(&toks, &mut i) as types::Real;
+        for j in 0..nb as usize {
+            let p = &mut *bodytab.add(j);
+            for k in 0..NDIM {
+                p.bodynode.pos[k] = parse_f64(&toks, &mut i)? as Real;
             }
         }
-        for j in 0..nbody as usize {
-            let p = &mut *types::bodytab.add(j);
-            for k in 0..types::NDIM {
-                p.vel[k] = parse_f64(&toks, &mut i) as types::Real;
+        for j in 0..nb as usize {
+            let p = &mut *bodytab.add(j);
+            for k in 0..NDIM {
+                p.vel[k] = parse_f64(&toks, &mut i)? as Real;
             }
         }
-        for j in 0..nbody as usize {
-            let p = &mut *types::bodytab.add(j);
-            p.bodynode.node_type = types::BODY;
+        for j in 0..nb as usize {
+            let p = &mut *bodytab.add(j);
+            p.bodynode.node_type = BODY;
         }
 
-        let opts = c_str_to_string(types::options);
-        if crate::types::scanopt(&opts, "reset-time") {
-            types::tnow = 0.0;
+        let opts = c_str_to_string(options);
+        if scanopt(&opts, "reset-time") {
+            tnow = 0.0;
         }
     }
+    Ok(())
 }
 
-fn read_input_tokens() -> Vec<String> {
-    let infile = c_str_to_string(unsafe { types::infile });
-    let contents = std::fs::read_to_string(&infile).unwrap_or_else(|_| {
-        crate::types::error(&format!("inputdata: cannot open file \"{}\"\n", infile));
-        unreachable!()
-    });
-    contents.split_whitespace().map(|s| s.to_string()).collect()
+fn read_input_tokens() -> Result<Vec<String>> {
+    let in_str = c_str_to_string(unsafe { infile });
+    let contents =
+        std::fs::read_to_string(&in_str).map_err(|_| TreeError::FileOpen(in_str.clone()))?;
+    Ok(contents.split_whitespace().map(|s| s.to_string()).collect())
 }
 
-fn parse_i32(toks: &[String], i: &mut usize) -> i32 {
-    let s = toks.get(*i).unwrap_or_else(|| {
-        crate::types::error("in_int: input conversion error\n");
-        unreachable!()
-    });
+fn parse_i32(toks: &[String], i: &mut usize) -> Result<i32> {
+    let s = toks.get(*i).ok_or(TreeError::InputIntConversion)?;
     *i += 1;
-    s.parse().unwrap_or_else(|_| {
-        crate::types::error("in_int: input conversion error\n");
-        unreachable!()
-    })
+    s.parse().map_err(|_| TreeError::InputIntConversion)
 }
 
-fn parse_f64(toks: &[String], i: &mut usize) -> f64 {
-    let s = toks.get(*i).unwrap_or_else(|| {
-        crate::types::error("in_real: input conversion error\n");
-        unreachable!()
-    });
+fn parse_f64(toks: &[String], i: &mut usize) -> Result<f64> {
+    let s = toks.get(*i).ok_or(TreeError::InputFloatConversion)?;
     *i += 1;
-    s.parse().unwrap_or_else(|_| {
-        crate::types::error("in_real: input conversion error\n");
-        unreachable!()
-    })
+    s.parse().map_err(|_| TreeError::InputFloatConversion)
 }
 
-pub fn startoutput() {
-    let headline = c_str_to_string(unsafe { types::headline });
-    println!("\n{}", headline);
-    let usequad = if unsafe { types::usequad } != 0 {
+pub fn startoutput() -> Result<()> {
+    let headline_str = c_str_to_string(unsafe { headline });
+    println!("\n{}", headline_str);
+    let use_quad_str = if unsafe { usequad } != 0 {
         "true"
     } else {
         "false"
@@ -146,57 +139,46 @@ pub fn startoutput() {
     unsafe {
         println!(
             "{:8}{:10.5}{:10.4}{:10.2}{:>10}{:10.5}{:10.4}",
-            types::nbody,
-            types::dtime,
-            types::eps,
-            types::theta,
-            usequad,
-            types::dtout,
-            types::tstop
+            nbody, dtime, eps, theta, use_quad_str, dtout, tstop
         );
     }
-    let opts = c_str_to_string(unsafe { types::options });
+    let opts = c_str_to_string(unsafe { options });
     if !opts.is_empty() {
         println!("\n\toptions: {}", opts);
     }
-    let savefile = c_str_to_string(unsafe { types::savefile });
-    if !savefile.is_empty() {
-        savestate(&savefile);
+    let save_str = c_str_to_string(unsafe { savefile });
+    if !save_str.is_empty() {
+        savestate(&save_str)?;
     }
+    Ok(())
 }
 
 pub fn forcereport() {
     unsafe {
-        let ftree = (types::nbody + types::ncell - 1) as f32 / types::ncell as f32;
+        let ftree = (nbody + ncell - 1) as f32 / ncell as f32;
         println!(
             "\n\t{:>8}{:>8}{:>8}{:>8}{:>10}{:>10}{:>8}",
             "rsize", "tdepth", "ftree", "actmax", "nbbtot", "nbctot", "CPUfc"
         );
         println!(
             "\t{:8.1}{:8}{:8.3}{:8}{:10}{:10}{:8.3}",
-            types::rsize,
-            types::tdepth,
-            ftree,
-            types::actmax,
-            types::nbbcalc,
-            types::nbccalc,
-            types::cpuforce
+            rsize, tdepth, ftree, actmax, nbbcalc, nbccalc, cpuforce
         );
     }
 }
 
-pub fn output() {
+pub fn output() -> Result<()> {
     unsafe {
         diagnostics();
 
-        let mut cmabs: types::Real = 0.0;
-        for k in 0..types::NDIM {
-            cmabs += types::CMVEL[k] * types::CMVEL[k];
+        let mut cmabs: Real = 0.0;
+        for k in 0..NDIM {
+            cmabs += CMVEL[k] * CMVEL[k];
         }
         cmabs = cmabs.sqrt();
-        let mut amabs: types::Real = 0.0;
-        for k in 0..types::NDIM {
-            amabs += types::AMVEC[k] * types::AMVEC[k];
+        let mut amabs: Real = 0.0;
+        for k in 0..NDIM {
+            amabs += AMVEC[k] * AMVEC[k];
         }
         amabs = amabs.sqrt();
 
@@ -206,31 +188,32 @@ pub fn output() {
         );
         println!(
             "    {:8.3}{:8.5}{:8.5}{:8.5}{:8.5}{:8.5}{:8.5}{:8.3}",
-            types::tnow,
-            types::ETOT[0].abs(),
-            types::ETOT[1],
-            -types::ETOT[2],
-            -types::ETOT[1] / types::ETOT[2],
+            tnow,
+            ETOT[0].abs(),
+            ETOT[1],
+            -ETOT[2],
+            -ETOT[1] / ETOT[2],
             cmabs,
             amabs,
-            crate::types::cputime()
+            cputime()?
         );
 
-        let teff = types::tnow + types::dtime / 8.0;
-        let outfile = c_str_to_string(types::outfile);
-        if !outfile.is_empty() && teff >= types::tout {
-            outputdata();
+        let teff = tnow + dtime / 8.0;
+        let out_str = c_str_to_string(outfile);
+        if !out_str.is_empty() && teff >= tout {
+            outputdata()?;
         }
-        let savefile = c_str_to_string(types::savefile);
-        if !savefile.is_empty() {
-            savestate(&savefile);
+        let save_str = c_str_to_string(savefile);
+        if !save_str.is_empty() {
+            savestate(&save_str)?;
         }
     }
+    Ok(())
 }
 
-pub fn outputdata() {
-    let outfile = c_str_to_string(unsafe { types::outfile });
-    let name = outfile.replace("%d", &unsafe { types::nstep }.to_string());
+pub fn outputdata() -> Result<()> {
+    let out_str = c_str_to_string(unsafe { outfile });
+    let name = out_str.replace("%d", &unsafe { nstep }.to_string());
 
     let exists = std::path::Path::new(&name).exists();
     let file = if exists {
@@ -238,253 +221,222 @@ pub fn outputdata() {
     } else {
         std::fs::File::create(&name)
     };
-    let mut f = BufWriter::new(match file {
-        Ok(f) => f,
-        Err(_) => {
-            crate::types::error("outputdata: cannot open output file\n");
-            unreachable!()
-        }
-    });
+    let mut f = BufWriter::new(file.map_err(|_| TreeError::OutputFileOpen)?);
 
     unsafe {
-        out_int(&mut f, types::nbody);
-        out_int(&mut f, types::NDIM as i32);
-        out_real(&mut f, types::tnow);
-        for j in 0..types::nbody as usize {
-            out_real(&mut f, (*types::bodytab.add(j)).bodynode.mass);
+        out_int(&mut f, nbody)?;
+        out_int(&mut f, NDIM as i32)?;
+        out_real(&mut f, tnow)?;
+        for j in 0..nbody as usize {
+            out_real(&mut f, (*bodytab.add(j)).bodynode.mass)?;
         }
-        for j in 0..types::nbody as usize {
-            out_vector(&mut f, (*types::bodytab.add(j)).bodynode.pos);
+        for j in 0..nbody as usize {
+            out_vector(&mut f, (*bodytab.add(j)).bodynode.pos)?;
         }
-        for j in 0..types::nbody as usize {
-            out_vector(&mut f, (*types::bodytab.add(j)).vel);
+        for j in 0..nbody as usize {
+            out_vector(&mut f, (*bodytab.add(j)).vel)?;
         }
-        let opts = c_str_to_string(types::options);
-        if crate::types::scanopt(&opts, "out-phi") {
-            for j in 0..types::nbody as usize {
-                out_real(&mut f, (*types::bodytab.add(j)).phi);
+        let opts = c_str_to_string(options);
+        if scanopt(&opts, "out-phi") {
+            for j in 0..nbody as usize {
+                out_real(&mut f, (*bodytab.add(j)).phi)?;
             }
         }
-        if crate::types::scanopt(&opts, "out-acc") {
-            for j in 0..types::nbody as usize {
-                out_vector(&mut f, (*types::bodytab.add(j)).acc);
+        if scanopt(&opts, "out-acc") {
+            for j in 0..nbody as usize {
+                out_vector(&mut f, (*bodytab.add(j)).acc)?;
             }
         }
     }
 
     println!("\n\tdata output to file {} at time {:.6}", name, unsafe {
-        types::tnow
+        tnow
     });
     unsafe {
-        types::tout += types::dtout;
+        tout += dtout;
     }
+    Ok(())
 }
 
-fn out_int(f: &mut impl Write, v: i32) {
+fn out_int(f: &mut impl Write, v: i32) -> Result<()> {
     let line = format!(" {}\n", v);
-    if f.write_all(line.as_bytes()).is_err() {
-        crate::types::error("out_int: fprintf failed\n");
-    }
+    f.write_all(line.as_bytes())
+        .map_err(|_| TreeError::WriteFailed)
 }
 
-fn out_real(f: &mut impl Write, v: types::Real) {
+fn out_real(f: &mut impl Write, v: Real) -> Result<()> {
     let line = format!(" {}\n", fmt_e14(v));
-    if f.write_all(line.as_bytes()).is_err() {
-        crate::types::error("out_real: fprintf failed\n");
-    }
+    f.write_all(line.as_bytes())
+        .map_err(|_| TreeError::WriteFailed)
 }
 
-fn out_vector(f: &mut impl Write, v: types::Vector) {
+fn out_vector(f: &mut impl Write, v: Vector) -> Result<()> {
     let line = format!(" {} {} {}\n", fmt_e14(v[0]), fmt_e14(v[1]), fmt_e14(v[2]));
-    if f.write_all(line.as_bytes()).is_err() {
-        crate::types::error("out_vector: fprintf failed\n");
-    }
+    f.write_all(line.as_bytes())
+        .map_err(|_| TreeError::WriteFailed)
 }
 
 unsafe fn diagnostics() {
-    types::MTOT = 0.0;
-    types::ETOT[1] = 0.0;
-    types::ETOT[2] = 0.0;
-    types::matrix_zero(&mut types::KETEN);
-    types::matrix_zero(&mut types::PETEN);
-    types::vector_zero(&mut types::AMVEC);
-    types::vector_zero(&mut types::CMPOS);
-    types::vector_zero(&mut types::CMVEL);
+    MTOT = 0.0;
+    ETOT[1] = 0.0;
+    ETOT[2] = 0.0;
+    matrix_zero(&mut KETEN);
+    matrix_zero(&mut PETEN);
+    vector_zero(&mut AMVEC);
+    vector_zero(&mut CMPOS);
+    vector_zero(&mut CMVEL);
 
-    for j in 0..types::nbody as usize {
-        let p = &*types::bodytab.add(j);
+    for j in 0..nbody as usize {
+        let p = &*bodytab.add(j);
         let m = p.bodynode.mass;
-        types::MTOT += m;
+        MTOT += m;
 
-        let mut velsq: types::Real = 0.0;
-        for k in 0..types::NDIM {
+        let mut velsq: Real = 0.0;
+        for k in 0..NDIM {
             velsq += p.vel[k] * p.vel[k];
         }
-        types::ETOT[1] += 0.5 * m * velsq;
-        types::ETOT[2] += 0.5 * m * p.phi;
+        ETOT[1] += 0.5 * m * velsq;
+        ETOT[2] += 0.5 * m * p.phi;
 
-        for i in 0..types::NDIM {
-            for k in 0..types::NDIM {
-                types::KETEN[i][k] += (0.5 * m * p.vel[i]) * p.vel[k];
-                types::PETEN[i][k] += (m * p.bodynode.pos[i]) * p.acc[k];
+        for i in 0..NDIM {
+            for k in 0..NDIM {
+                KETEN[i][k] += (0.5 * m * p.vel[i]) * p.vel[k];
+                PETEN[i][k] += (m * p.bodynode.pos[i]) * p.acc[k];
             }
         }
 
-        for i in 0..types::NDIM {
-            let ii = (i + 1) % types::NDIM;
-            let jj = (i + 2) % types::NDIM;
-            types::AMVEC[i] +=
-                m * (p.vel[ii] * p.bodynode.pos[jj] - p.vel[jj] * p.bodynode.pos[ii]);
+        for i in 0..NDIM {
+            let ii = (i + 1) % NDIM;
+            let jj = (i + 2) % NDIM;
+            AMVEC[i] += m * (p.vel[ii] * p.bodynode.pos[jj] - p.vel[jj] * p.bodynode.pos[ii]);
         }
 
-        for k in 0..types::NDIM {
-            types::CMPOS[k] += m * p.bodynode.pos[k];
-            types::CMVEL[k] += m * p.vel[k];
+        for k in 0..NDIM {
+            CMPOS[k] += m * p.bodynode.pos[k];
+            CMVEL[k] += m * p.vel[k];
         }
     }
 
-    types::ETOT[0] = types::ETOT[1] + types::ETOT[2];
-    for k in 0..types::NDIM {
-        types::CMPOS[k] /= types::MTOT;
-        types::CMVEL[k] /= types::MTOT;
+    ETOT[0] = ETOT[1] + ETOT[2];
+    for k in 0..NDIM {
+        CMPOS[k] /= MTOT;
+        CMVEL[k] /= MTOT;
     }
 }
 
-pub fn savestate(pattern: &str) {
+pub fn savestate(pattern: &str) -> Result<()> {
     let name = if pattern.contains("%d") {
-        pattern.replace("%d", &unsafe { types::nstep & 1 }.to_string())
+        pattern.replace("%d", &unsafe { nstep & 1 }.to_string())
     } else {
         pattern.to_string()
     };
 
-    let file = std::fs::File::create(&name);
-    let mut f = BufWriter::new(match file {
-        Ok(f) => f,
-        Err(_) => {
-            crate::types::error("savestate: cannot create file\n");
-            unreachable!()
-        }
-    });
+    let f = std::fs::File::create(&name).map_err(|_| TreeError::FileCreate(name))?;
+    let mut f = BufWriter::new(f);
 
-    write_string(&mut f, &getargv0());
-    write_string(&mut f, &getversion());
+    write_string(&mut f, &getargv0())?;
+    write_string(&mut f, &getversion())?;
     unsafe {
-        write_real(&mut f, types::dtime);
-        write_real(&mut f, types::theta);
-        write_bytes(&mut f, &[types::usequad]);
-        write_real(&mut f, types::eps);
-        write_string(&mut f, &c_str_to_string(types::options));
-        write_real(&mut f, types::tstop);
-        write_real(&mut f, types::dtout);
-        write_real(&mut f, types::tnow);
-        write_real(&mut f, types::tout);
-        write_int(&mut f, types::nstep);
-        write_real(&mut f, types::rsize);
-        write_int(&mut f, types::nbody);
-        write_bodytab(&mut f);
+        write_real(&mut f, dtime)?;
+        write_real(&mut f, theta)?;
+        write_bytes(&mut f, &[usequad])?;
+        write_real(&mut f, eps)?;
+        write_string(&mut f, &c_str_to_string(options))?;
+        write_real(&mut f, tstop)?;
+        write_real(&mut f, dtout)?;
+        write_real(&mut f, tnow)?;
+        write_real(&mut f, tout)?;
+        write_int(&mut f, nstep)?;
+        write_real(&mut f, rsize)?;
+        write_int(&mut f, nbody)?;
+        write_bodytab(&mut f)?;
     }
+    Ok(())
 }
 
-fn write_bytes(f: &mut impl Write, buf: &[u8]) {
-    if f.write_all(buf).is_err() {
-        crate::types::error("savestate: fwrite failed\n");
-    }
+fn write_bytes(f: &mut impl Write, buf: &[u8]) -> Result<()> {
+    f.write_all(buf).map_err(|_| TreeError::WriteFailed)
 }
 
-fn write_int(f: &mut impl Write, v: i32) {
-    write_bytes(f, &v.to_ne_bytes());
+fn write_int(f: &mut impl Write, v: i32) -> Result<()> {
+    write_bytes(f, &v.to_ne_bytes())
 }
 
-fn write_real(f: &mut impl Write, v: types::Real) {
-    write_bytes(f, &v.to_ne_bytes());
+fn write_real(f: &mut impl Write, v: Real) -> Result<()> {
+    write_bytes(f, &v.to_ne_bytes())
 }
 
-fn write_string(f: &mut impl Write, s: &str) {
-    write_int(f, (s.len() + 1) as i32);
-    write_bytes(f, s.as_bytes());
-    write_bytes(f, &[0u8]);
+fn write_string(f: &mut impl Write, s: &str) -> Result<()> {
+    write_int(f, (s.len() + 1) as i32)?;
+    write_bytes(f, s.as_bytes())?;
+    write_bytes(f, &[0u8])
 }
 
-fn write_bodytab(f: &mut impl Write) {
-    let nb = unsafe { types::nbody } as usize;
+fn write_bodytab(f: &mut impl Write) -> Result<()> {
+    let nb = unsafe { nbody } as usize;
     let slice = unsafe {
-        std::slice::from_raw_parts(
-            types::bodytab as *const u8,
-            nb * std::mem::size_of::<types::Body>(),
-        )
+        std::slice::from_raw_parts(bodytab as *const u8, nb * std::mem::size_of::<Body>())
     };
-    write_bytes(f, slice);
+    write_bytes(f, slice)
 }
 
-pub fn restorestate(file: &str) {
-    let f = std::fs::File::open(file);
-    let mut f = BufReader::new(match f {
-        Ok(f) => f,
-        Err(_) => {
-            crate::types::error("restorestate: cannot open file\n");
-            unreachable!()
-        }
-    });
+pub fn restorestate(file: &str) -> Result<()> {
+    let f = std::fs::File::open(file).map_err(|_| TreeError::FileOpen(file.to_string()))?;
+    let mut f = BufReader::new(f);
 
-    let program = read_string(&mut f);
-    let version = read_string(&mut f);
+    let program = read_string(&mut f)?;
+    let version = read_string(&mut f)?;
     if program != getargv0() || version != getversion() {
         println!("warning: state file may be outdated\n\n");
     }
 
     unsafe {
-        types::dtime = read_real(&mut f);
-        types::theta = read_real(&mut f);
+        dtime = read_real(&mut f)?;
+        theta = read_real(&mut f)?;
         let mut uq = [0u8; 1];
-        read_bytes(&mut f, &mut uq);
-        types::usequad = uq[0];
-        types::eps = read_real(&mut f);
-        let opts = read_string(&mut f);
-        types::options = alloc_c_string(&opts);
-        types::tstop = read_real(&mut f);
-        types::dtout = read_real(&mut f);
-        types::tnow = read_real(&mut f);
-        types::tout = read_real(&mut f);
-        types::nstep = read_int(&mut f);
-        types::rsize = read_real(&mut f);
-        types::nbody = read_int(&mut f);
-        let nb = types::nbody as usize;
-        types::bodytab =
-            crate::types::allocate(nb * std::mem::size_of::<types::Body>()) as *mut types::Body;
-        let slice = std::slice::from_raw_parts_mut(
-            types::bodytab as *mut u8,
-            nb * std::mem::size_of::<types::Body>(),
-        );
-        if f.read_exact(slice).is_err() {
-            crate::types::error("restorestate: fread failed\n");
-        }
+        read_bytes(&mut f, &mut uq)?;
+        usequad = uq[0];
+        eps = read_real(&mut f)?;
+        let opts = read_string(&mut f)?;
+        options = alloc_c_string(&opts)?;
+        tstop = read_real(&mut f)?;
+        dtout = read_real(&mut f)?;
+        tnow = read_real(&mut f)?;
+        tout = read_real(&mut f)?;
+        nstep = read_int(&mut f)?;
+        rsize = read_real(&mut f)?;
+        nbody = read_int(&mut f)?;
+        let nb = nbody as usize;
+        bodytab = allocate(nb * std::mem::size_of::<Body>())? as *mut Body;
+        let slice =
+            std::slice::from_raw_parts_mut(bodytab as *mut u8, nb * std::mem::size_of::<Body>());
+        f.read_exact(slice).map_err(|_| TreeError::ReadFailed)?;
     }
+    Ok(())
 }
 
-fn read_bytes(f: &mut impl Read, buf: &mut [u8]) {
-    if f.read_exact(buf).is_err() {
-        crate::types::error("restorestate: fread failed\n");
-    }
+fn read_bytes(f: &mut impl Read, buf: &mut [u8]) -> Result<()> {
+    f.read_exact(buf).map_err(|_| TreeError::ReadFailed)
 }
 
-fn read_int(f: &mut impl Read) -> i32 {
+fn read_int(f: &mut impl Read) -> Result<i32> {
     let mut b = [0u8; 4];
-    read_bytes(f, &mut b);
-    i32::from_ne_bytes(b)
+    read_bytes(f, &mut b)?;
+    Ok(i32::from_ne_bytes(b))
 }
 
-fn read_real(f: &mut impl Read) -> types::Real {
+fn read_real(f: &mut impl Read) -> Result<Real> {
     let mut b = [0u8; 4];
-    read_bytes(f, &mut b);
-    types::Real::from_ne_bytes(b)
+    read_bytes(f, &mut b)?;
+    Ok(Real::from_ne_bytes(b))
 }
 
-fn read_string(f: &mut impl Read) -> String {
-    let nchars = read_int(f) as usize;
+fn read_string(f: &mut impl Read) -> Result<String> {
+    let nchars = read_int(f)? as usize;
     let mut buf = vec![0u8; nchars];
-    read_bytes(f, &mut buf);
+    read_bytes(f, &mut buf)?;
     while buf.last() == Some(&0) {
         buf.pop();
     }
-    String::from_utf8_lossy(&buf).into_owned()
+    Ok(String::from_utf8_lossy(&buf).into_owned())
 }

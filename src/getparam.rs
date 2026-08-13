@@ -1,3 +1,6 @@
+use crate::error::Result;
+use crate::error::TreeError;
+
 const DEFPARAM: i32 = 0o1;
 const REQPARAM: i32 = 0o2;
 const ARGPARAM: i32 = 0o4;
@@ -13,7 +16,7 @@ struct Param {
 static mut PROGNAME: Option<String> = None;
 static mut PARAMS: Option<Vec<Param>> = None;
 
-pub fn initparam(argv: &[&str], defv: &[&str]) {
+pub fn initparam(argv: &[&str], defv: &[&str]) -> Result<()> {
     unsafe {
         PROGNAME = Some(argv[0].to_string());
     }
@@ -71,7 +74,7 @@ pub fn initparam(argv: &[&str], defv: &[&str]) {
                 }
             }
         }
-        std::process::exit(0);
+        return Err(TreeError::Help);
     }
 
     let mut scanpos = true;
@@ -81,26 +84,31 @@ pub fn initparam(argv: &[&str], defv: &[&str]) {
             scanpos = false;
             if let Some(pp) = params.iter_mut().find(|p| p.name == name) {
                 if pp.flags & ARGPARAM != 0 {
-                    eprintln!("{}: parameter {} duplicated", argv[0], name);
-                    std::process::exit(1);
+                    return Err(TreeError::ParamDuplicated {
+                        prog: argv[0].to_string(),
+                        name,
+                    });
                 }
                 pp.value = value;
                 pp.flags = (pp.flags & !DEFPARAM) | ARGPARAM;
             } else {
-                eprintln!("{}: parameter {} unknown", argv[0], name);
-                std::process::exit(1);
+                return Err(TreeError::UnknownParam {
+                    prog: argv[0].to_string(),
+                    name,
+                });
             }
         } else if scanpos {
             pidx += 1;
             if pidx >= params.len() {
-                eprintln!("{}: too many arguments", argv[0]);
-                std::process::exit(1);
+                return Err(TreeError::TooManyArgs(argv[0].to_string()));
             }
             params[pidx].value = arg.to_string();
             params[pidx].flags = (params[pidx].flags & !DEFPARAM) | ARGPARAM;
         } else {
-            eprintln!("{}: nameless arg {}", argv[0], arg);
-            std::process::exit(1);
+            return Err(TreeError::NamelessArg {
+                prog: argv[0].to_string(),
+                arg: arg.to_string(),
+            });
         }
     }
 
@@ -118,30 +126,29 @@ pub fn initparam(argv: &[&str], defv: &[&str]) {
             }
         }
         eprintln!(": required arguments missing");
-        std::process::exit(1);
+        return Err(TreeError::MissingRequiredParam);
     }
 
     unsafe {
         PARAMS = Some(params);
     }
+    Ok(())
 }
 
-pub fn getparam(name: &str) -> String {
+pub fn getparam(name: &str) -> Result<String> {
     unsafe {
         if let Some(ref params) = PARAMS {
             if let Some(pp) = params.iter().find(|p| p.name == name) {
-                return pp.value.clone();
+                return Ok(pp.value.clone());
             }
-            eprintln!("getparam: parameter {} unknown", name);
-            std::process::exit(1);
+            return Err(TreeError::ParamNotAvailable(name.to_string()));
         }
         if name == "argv0" {
             if let Some(ref progname) = PROGNAME {
-                return progname.clone();
+                return Ok(progname.clone());
             }
         }
-        eprintln!("getparam: called before initparam");
-        std::process::exit(1);
+        Err(TreeError::NotInitialized)
     }
 }
 
@@ -156,8 +163,8 @@ pub fn getparamstat(name: &str) -> i32 {
     }
 }
 
-pub fn getiparam(name: &str) -> i32 {
-    let val_str = getparam(name);
+pub fn getiparam(name: &str) -> Result<i32> {
+    let val_str = getparam(name)?;
     let val: i64 = val_str.parse().unwrap_or_else(|_| {
         let trimmed = val_str.trim_end_matches(|c: char| c.is_alphabetic());
         let suffix = val_str[trimmed.len()..].to_string();
@@ -168,30 +175,32 @@ pub fn getiparam(name: &str) -> i32 {
             _ => base,
         }
     });
-    val as i32
+    Ok(val as i32)
 }
 
-pub fn getdparam(name: &str) -> f64 {
-    let val_str = getparam(name);
+pub fn getdparam(name: &str) -> Result<f64> {
+    let val_str = getparam(name)?;
     if let Some((n, d)) = val_str.split_once('/') {
         let n: f64 = n.parse().unwrap_or(0.0);
         let d: f64 = d.parse().unwrap_or(1.0);
-        n / d
+        Ok(n / d)
     } else {
-        val_str.parse().unwrap_or(0.0)
+        val_str
+            .parse()
+            .map_err(|_| TreeError::ParamNotAvailable(name.to_string()))
     }
 }
 
-pub fn getbparam(name: &str) -> bool {
-    let val = getparam(name);
+pub fn getbparam(name: &str) -> Result<bool> {
+    let val = getparam(name)?;
     let first = val.chars().next().unwrap_or(' ');
     match first {
-        't' | 'T' | 'y' | 'Y' | '1' => true,
-        'f' | 'F' | 'n' | 'N' | '0' => false,
-        _ => {
-            eprintln!("getbparam: {}={} not bool", name, val);
-            std::process::exit(1);
-        }
+        't' | 'T' | 'y' | 'Y' | '1' => Ok(true),
+        'f' | 'F' | 'n' | 'N' | '0' => Ok(false),
+        _ => Err(TreeError::BadBoolParam {
+            name: name.to_string(),
+            value: val,
+        }),
     }
 }
 
@@ -223,8 +232,8 @@ mod tests {
     #[test]
     fn getparam_after_init() {
         reset();
-        initparam(&["prog", "x=5"], &["x=0"]);
-        assert_eq!(getparam("x"), "5");
+        initparam(&["prog", "x=5"], &["x=0"]).unwrap();
+        assert_eq!(getparam("x").unwrap(), "5");
         assert_eq!(getparamstat("x") & ARGPARAM, ARGPARAM);
     }
 
@@ -234,7 +243,7 @@ mod tests {
         unsafe {
             PROGNAME = Some("hello".to_string());
         }
-        assert_eq!(getparam("argv0"), "hello");
+        assert_eq!(getparam("argv0").unwrap(), "hello");
     }
 
     #[test]

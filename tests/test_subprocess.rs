@@ -14,11 +14,7 @@ fn subprocess_oom_path() {
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("allocate: not enough memory"),
-        "stderr: {}",
-        stderr
-    );
+    assert!(stderr.contains("out of memory"), "stderr: {}", stderr);
 }
 
 #[test]
@@ -115,5 +111,5 @@ fn subprocess_walktree_overflow() {
 fn subprocess_theta_zero_oom() {
     let (c, _, err) = run_args(&["nbody=40", "theta=0.0"]);
     assert_ne!(c, 0);
-    assert!(err.contains("not enough memory"), "{}", err);
+    assert!(err.contains("out of memory"), "{}", err);
 }

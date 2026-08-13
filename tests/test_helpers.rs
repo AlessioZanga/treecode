@@ -1,6 +1,10 @@
 use std::os::unix::io::RawFd;
 use std::path::{Path, PathBuf};
 
+use treecode::types::{
+    matrix_identity, matrix_zero, nbody, vector_length, vector_zero, Matrix, Vector,
+};
+
 const STDOUT_FD: RawFd = 1;
 
 struct StdoutCapture {
@@ -37,7 +41,7 @@ fn run_rust_in(dir: &Path, args: &[&str]) {
     let mut full: Vec<String> = vec!["treecode".to_string()];
     full.extend(args.iter().map(|s| s.to_string()));
     let refs: Vec<&str> = full.iter().map(|s| s.as_str()).collect();
-    treecode::treecode::run(&refs);
+    treecode::treecode::run(&refs).unwrap();
     drop(cap);
 }
 
@@ -71,28 +75,28 @@ fn save_restore_roundtrip() {
 
     let state = dir.path().join("w.rst");
     let state_str = state.display().to_string();
-    treecode::treeio::savestate(&state_str);
+    treecode::treeio::savestate(&state_str).unwrap();
     assert!(state.exists());
 
     run_rust_in(dir.path(), &["nbody=30", "tstop=0.03", "dtout=0.01"]);
-    treecode::treeio::restorestate(&state_str);
-    let nbody = unsafe { treecode::types::nbody };
-    assert_eq!(nbody, 30);
+    treecode::treeio::restorestate(&state_str).unwrap();
+    let nbody_val = unsafe { nbody };
+    assert_eq!(nbody_val, 30);
 }
 
 #[test]
 fn vector_matrix_helpers() {
-    let mut v = [1.0, 2.0, 3.0];
-    treecode::types::vector_zero(&mut v);
-    assert_eq!(v, [0.0; 3]);
-    assert!((treecode::types::vector_length(&[3.0, 4.0, 0.0]) - 5.0).abs() < 1e-5);
+    let mut v = Vector::from([1.0, 2.0, 3.0]);
+    vector_zero(&mut v);
+    assert_eq!(v, Vector::zero());
+    assert!((vector_length(&Vector::from([3.0, 4.0, 0.0])) - 5.0).abs() < 1e-5);
 
-    let mut m = [[1.0; 3]; 3];
-    treecode::types::matrix_zero(&mut m);
-    assert_eq!(m, [[0.0; 3]; 3]);
+    let mut m = Matrix::ones();
+    matrix_zero(&mut m);
+    assert_eq!(m, Matrix::zero());
 
-    let mut i = [[0.0; 3]; 3];
-    treecode::types::matrix_identity(&mut i);
+    let mut i = Matrix::zero();
+    matrix_identity(&mut i);
     assert_eq!(i[0][0], 1.0);
     assert_eq!(i[1][0], 0.0);
     assert_eq!(i[2][2], 1.0);

@@ -1,41 +1,26 @@
-#![allow(clippy::needless_range_loop)]
 #![allow(non_upper_case_globals)]
 
-use std::io::Write;
 use std::os::raw::{c_char, c_int, c_short};
 
-pub fn allocate(nb: usize) -> *mut u8 {
+pub fn allocate(nb: usize) -> Result<*mut u8> {
     unsafe {
         let ptr = libc::calloc(nb as libc::size_t, 1) as *mut u8;
         if ptr.is_null() {
-            eprintln!("allocate: not enough memory ({} bytes)", nb);
-            std::process::exit(1);
+            return Err(TreeError::OutOfMemory(nb));
         }
-        ptr
+        Ok(ptr)
     }
 }
 
-pub fn cputime() -> f64 {
+pub fn cputime() -> Result<f64> {
     unsafe {
         let mut buffer: libc::tms = std::mem::zeroed();
         if libc::times(&mut buffer) == -1 {
-            eprintln!("cputime: times() call failed");
-            std::process::exit(1);
+            return Err(TreeError::CpuTimeFailed);
         }
         let hz = libc::sysconf(libc::_SC_CLK_TCK) as f64;
-        (buffer.tms_utime + buffer.tms_stime) as f64 / (60.0 * hz)
+        Ok((buffer.tms_utime + buffer.tms_stime) as f64 / (60.0 * hz))
     }
-}
-
-pub fn eprintf(fmt: &str) {
-    eprint!("{}", fmt);
-    let _ = std::io::stderr().flush();
-}
-
-pub fn error(fmt: &str) {
-    eprint!("{}", fmt);
-    let _ = std::io::stderr().flush();
-    std::process::exit(1);
 }
 
 pub fn scanopt(opt: &str, key: &str) -> bool {
@@ -47,13 +32,13 @@ pub fn scanopt(opt: &str, key: &str) -> bool {
     false
 }
 
-pub type Real = f32;
-pub type Vector = [Real; 3];
-pub type Matrix = [[Real; 3]; 3];
+pub use crate::error::eprintf;
+pub use crate::error::{Result, TreeError};
+pub use crate::vecmath::{matrix_identity, matrix_zero, vector_length, vector_zero};
+pub use crate::vecmath::{Matrix, Real, Vector, NDIM};
 
 pub const BODY: i16 = 0o1;
 pub const CELL: i16 = 0o2;
-pub const NDIM: usize = 3;
 pub const NSUB: usize = 1 << NDIM;
 
 #[repr(C)]
@@ -131,41 +116,11 @@ pub static mut bodytab: *mut Body = std::ptr::null_mut();
 
 pub static mut MTOT: Real = 0.0;
 pub static mut ETOT: [Real; 3] = [0.0; 3];
-pub static mut KETEN: Matrix = [[0.0; NDIM]; NDIM];
-pub static mut PETEN: Matrix = [[0.0; NDIM]; NDIM];
-pub static mut CMPOS: Vector = [0.0; NDIM];
-pub static mut CMVEL: Vector = [0.0; NDIM];
-pub static mut AMVEC: Vector = [0.0; NDIM];
-
-pub fn vector_zero(v: &mut Vector) {
-    for i in 0..NDIM {
-        v[i] = 0.0;
-    }
-}
-
-pub fn vector_length(v: &Vector) -> Real {
-    let mut sum = 0.0;
-    for i in 0..NDIM {
-        sum += v[i] * v[i];
-    }
-    sum.sqrt()
-}
-
-pub fn matrix_zero(m: &mut Matrix) {
-    for i in 0..NDIM {
-        for j in 0..NDIM {
-            m[i][j] = 0.0;
-        }
-    }
-}
-
-pub fn matrix_identity(m: &mut Matrix) {
-    for i in 0..NDIM {
-        for j in 0..NDIM {
-            m[i][j] = if i == j { 1.0 } else { 0.0 };
-        }
-    }
-}
+pub static mut KETEN: Matrix = Matrix::zero();
+pub static mut PETEN: Matrix = Matrix::zero();
+pub static mut CMPOS: Vector = Vector::zero();
+pub static mut CMVEL: Vector = Vector::zero();
+pub static mut AMVEC: Vector = Vector::zero();
 
 #[cfg(test)]
 mod tests {
@@ -174,7 +129,7 @@ mod tests {
     #[test]
     fn sorq_debug_formats() {
         let q: Sorq = Sorq {
-            quad: [[1.0; 3]; 3],
+            quad: Matrix([[1.0; 3]; 3]),
         };
         assert_eq!(format!("{:?}", q), "Sorq(...)");
     }

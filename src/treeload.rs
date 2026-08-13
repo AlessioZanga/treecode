@@ -1,53 +1,69 @@
-#![allow(clippy::needless_range_loop, clippy::manual_memcpy, static_mut_refs)]
+#![allow(
+    clippy::needless_range_loop,
+    clippy::manual_memcpy,
+    static_mut_refs,
+    // Raw-pointer tree access is temporary (removed by the Phase 2 arena);
+    // indexing a `Deref` field through a raw-pointer deref is intentional here.
+    dangerous_implicit_autorefs
+)]
 
+use crate::error::Result;
+use crate::error::TreeError;
+use crate::getparam;
 use crate::mathfns;
-use crate::types;
+use crate::types::{
+    allocate, cputime, cputree, matrix_zero, ncell, root, rsize, scanopt, tdepth, theta, usequad,
+    vector_zero, Body, Cell, Matrix, Node, Real, Vector, BODY, CELL, NDIM, NSUB,
+};
 
 const MAXLEVEL: usize = 32;
 
-static mut FREECELL: *mut types::Node = std::ptr::null_mut();
+static mut FREECELL: *mut Node = std::ptr::null_mut();
 static mut FIRSTCALL: bool = true;
 static mut BH86: bool = false;
 static mut SW94: bool = false;
 static mut CELLHIST: [i32; MAXLEVEL] = [0; MAXLEVEL];
 static mut SUBNHIST: [i32; MAXLEVEL] = [0; MAXLEVEL];
 
-pub fn maketree(btab: &mut [types::Body], nbody: i32) {
+pub fn maketree(btab: &mut [Body], nbody: i32) -> Result<()> {
     unsafe {
-        let cpustart = crate::types::cputime();
+        let cpustart = cputime()?;
         newtree();
-        types::root = makecell();
-        types::vector_zero(&mut (*types::root).cellnode.pos);
+        root = makecell()?;
+        vector_zero(&mut (*root).cellnode.pos);
         expandbox(btab.as_mut_ptr(), nbody);
-        load_all_bodies(btab.as_mut_ptr(), nbody);
-        parse_options();
+        load_all_bodies(btab.as_mut_ptr(), nbody)?;
+        parse_options()?;
         reset_stats();
-        hackcofm(types::root, types::rsize, 0);
-        threadtree(types::root as *mut types::Node, std::ptr::null_mut());
-        if types::usequad != 0 {
-            hackquad(types::root);
+        hackcofm(root, rsize, 0)?;
+        threadtree(root as *mut Node, std::ptr::null_mut());
+        if usequad != 0 {
+            hackquad(root);
         }
-        types::cputree = (crate::types::cputime() - cpustart) as types::Real;
+        cputree = (cputime()? - cpustart) as Real;
     }
+    Ok(())
 }
 
-unsafe fn load_all_bodies(btab: *mut types::Body, nbody: i32) {
+unsafe fn load_all_bodies(btab: *mut Body, nbody: i32) -> Result<()> {
     for i in 0..nbody as usize {
-        loadbody(btab.add(i));
+        loadbody(btab.add(i))?;
     }
+    Ok(())
 }
 
-unsafe fn parse_options() {
-    let opts = crate::getparam::getparam("options");
-    BH86 = crate::types::scanopt(&opts, "bh86");
-    SW94 = crate::types::scanopt(&opts, "sw94");
+unsafe fn parse_options() -> Result<()> {
+    let opts = getparam::getparam("options")?;
+    BH86 = scanopt(&opts, "bh86");
+    SW94 = scanopt(&opts, "sw94");
     if BH86 && SW94 {
-        crate::types::error("maketree: incompatible options bh86 and sw94\n");
+        return Err(TreeError::IncompatibleOptions);
     }
+    Ok(())
 }
 
 unsafe fn reset_stats() {
-    types::tdepth = 0;
+    tdepth = 0;
     for i in 0..MAXLEVEL {
         CELLHIST[i] = 0;
         SUBNHIST[i] = 0;
@@ -56,12 +72,12 @@ unsafe fn reset_stats() {
 
 unsafe fn newtree() {
     if !FIRSTCALL {
-        let mut p = types::root as *mut types::Node;
+        let mut p = root as *mut Node;
         while !p.is_null() {
-            if (*p).node_type == types::CELL {
+            if (*p).node_type == CELL {
                 (*p).next = FREECELL;
                 FREECELL = p;
-                p = (*(p as *mut types::Cell)).more;
+                p = (*(p as *mut Cell)).more;
             } else {
                 p = (*p).next;
             }
@@ -69,83 +85,80 @@ unsafe fn newtree() {
     } else {
         FIRSTCALL = false;
     }
-    types::root = std::ptr::null_mut();
-    types::ncell = 0;
+    root = std::ptr::null_mut();
+    ncell = 0;
 }
 
-unsafe fn makecell() -> *mut types::Cell {
-    let c: *mut types::Cell;
+unsafe fn makecell() -> Result<*mut Cell> {
+    let c: *mut Cell;
     if FREECELL.is_null() {
-        c = crate::types::allocate(std::mem::size_of::<types::Cell>()) as *mut types::Cell;
+        c = allocate(std::mem::size_of::<Cell>())? as *mut Cell;
     } else {
-        c = FREECELL as *mut types::Cell;
+        c = FREECELL as *mut Cell;
         FREECELL = (*FREECELL).next;
     }
-    (*c).cellnode.node_type = types::CELL;
+    (*c).cellnode.node_type = CELL;
     (*c).cellnode.update = 0;
-    for i in 0..types::NSUB {
+    for i in 0..NSUB {
         (*c).sorq.subp[i] = std::ptr::null_mut();
     }
-    types::ncell += 1;
-    c
+    ncell += 1;
+    Ok(c)
 }
 
-unsafe fn expandbox(btab: *mut types::Body, nbody: i32) {
-    let mut dmax: types::Real = 0.0;
+unsafe fn expandbox(btab: *mut Body, nbody: i32) {
+    let mut dmax: Real = 0.0;
     for i in 0..nbody as usize {
         let p = &*btab.add(i);
-        for k in 0..types::NDIM {
-            let d = (p.bodynode.pos[k] - (*types::root).cellnode.pos[k]).abs();
+        for k in 0..NDIM {
+            let d = (p.bodynode.pos[k] - (*root).cellnode.pos[k]).abs();
             if d > dmax {
                 dmax = d;
             }
         }
     }
-    while types::rsize < 2.0 * dmax {
-        types::rsize *= 2.0;
+    while rsize < 2.0 * dmax {
+        rsize *= 2.0;
     }
 }
 
-unsafe fn loadbody(p: *mut types::Body) {
-    let mut q = types::root;
+unsafe fn loadbody(p: *mut Body) -> Result<()> {
+    let mut q = root;
     let mut qind = subindex(p, q);
-    let mut qsize = types::rsize;
+    let mut qsize = rsize;
 
     while !(*q).sorq.subp[qind].is_null() {
-        if (*(*q).sorq.subp[qind]).node_type == types::BODY {
-            let other = (*q).sorq.subp[qind] as *mut types::Body;
-            require_distinct_positions(p, other);
-            let c = makecell();
+        if (*(*q).sorq.subp[qind]).node_type == BODY {
+            let other = (*q).sorq.subp[qind] as *mut Body;
+            require_distinct_positions(p, other)?;
+            let c = makecell()?;
             set_cell_midpoint(c, q, p, qsize);
             let sub = subindex(other, c);
-            (*c).sorq.subp[sub] = other as *mut types::Node;
-            (*q).sorq.subp[qind] = c as *mut types::Node;
+            (*c).sorq.subp[sub] = other as *mut Node;
+            (*q).sorq.subp[qind] = c as *mut Node;
         }
-        q = (*q).sorq.subp[qind] as *mut types::Cell;
+        q = (*q).sorq.subp[qind] as *mut Cell;
         qind = subindex(p, q);
         qsize /= 2.0;
     }
-    (*q).sorq.subp[qind] = p as *mut types::Node;
+    (*q).sorq.subp[qind] = p as *mut Node;
+    Ok(())
 }
 
-unsafe fn require_distinct_positions(p: *mut types::Body, other: *mut types::Body) {
-    let mut dist2: types::Real = 0.0;
-    for k in 0..types::NDIM {
+unsafe fn require_distinct_positions(p: *mut Body, other: *mut Body) -> Result<()> {
+    let mut dist2: Real = 0.0;
+    for k in 0..NDIM {
         let d = (*p).bodynode.pos[k] - (*other).bodynode.pos[k];
         dist2 += d * d;
     }
     if dist2 == 0.0 {
-        crate::types::error("loadbody: two bodies have same position\n");
+        return Err(TreeError::CoincidentBodies);
     }
+    Ok(())
 }
 
-unsafe fn set_cell_midpoint(
-    c: *mut types::Cell,
-    q: *mut types::Cell,
-    p: *mut types::Body,
-    qsize: types::Real,
-) {
-    for k in 0..types::NDIM {
+unsafe fn set_cell_midpoint(c: *mut Cell, q: *mut Cell, p: *mut Body, qsize: Real) {
+    for k in 0..NDIM {
         let offset = if (*p).bodynode.pos[k] < (*q).cellnode.pos[k] {
             -qsize
         } else {
@@ -155,86 +168,89 @@ unsafe fn set_cell_midpoint(
     }
 }
 
-unsafe fn subindex(p: *mut types::Body, q: *mut types::Cell) -> usize {
+unsafe fn subindex(p: *mut Body, q: *mut Cell) -> usize {
     let mut ind: usize = 0;
-    for k in 0..types::NDIM {
+    for k in 0..NDIM {
         if (*q).cellnode.pos[k] <= (*p).bodynode.pos[k] {
-            ind += types::NSUB >> (k + 1);
+            ind += NSUB >> (k + 1);
         }
     }
     ind
 }
 
-unsafe fn hackcofm(p: *mut types::Cell, psize: types::Real, lev: i32) {
-    let mut cmpos: types::Vector = [0.0; types::NDIM];
+unsafe fn hackcofm(p: *mut Cell, psize: Real, lev: i32) -> Result<()> {
+    let mut cmpos: Vector = Vector::zero();
 
     update_depth(lev);
     CELLHIST[lev as usize] += 1;
     (*p).cellnode.mass = 0.0;
 
-    accumulate_subnodes(p, psize, lev, &mut cmpos);
+    accumulate_subnodes(p, psize, lev, &mut cmpos)?;
     set_center_of_mass(p, &mut cmpos);
-    verify_center(p, &cmpos, psize);
+    verify_center(p, &cmpos, psize)?;
     setrcrit(p, &cmpos, psize);
-    for k in 0..types::NDIM {
+    for k in 0..NDIM {
         (*p).cellnode.pos[k] = cmpos[k];
     }
+    Ok(())
 }
 
 unsafe fn update_depth(lev: i32) {
-    if lev > types::tdepth {
-        types::tdepth = lev;
+    if lev > tdepth {
+        tdepth = lev;
     }
 }
 
 unsafe fn accumulate_subnodes(
-    p: *mut types::Cell,
-    psize: types::Real,
+    p: *mut Cell,
+    psize: Real,
     lev: i32,
-    cmpos: &mut types::Vector,
-) {
-    let mut tmpv: types::Vector = [0.0; types::NDIM];
-    for i in 0..types::NSUB {
+    cmpos: &mut Vector,
+) -> Result<()> {
+    let mut tmpv: Vector = Vector::zero();
+    for i in 0..NSUB {
         let q = (*p).sorq.subp[i];
         if !q.is_null() {
             SUBNHIST[lev as usize] += 1;
-            if (*q).node_type == types::CELL {
-                hackcofm(q as *mut types::Cell, psize / 2.0, lev + 1);
+            if (*q).node_type == CELL {
+                hackcofm(q as *mut Cell, psize / 2.0, lev + 1)?;
             }
             (*p).cellnode.update |= (*q).update;
             (*p).cellnode.mass += (*q).mass;
-            for k in 0..types::NDIM {
+            for k in 0..NDIM {
                 tmpv[k] = (*q).pos[k] * (*q).mass;
                 cmpos[k] += tmpv[k];
             }
         }
     }
+    Ok(())
 }
 
-unsafe fn set_center_of_mass(p: *mut types::Cell, cmpos: &mut types::Vector) {
+unsafe fn set_center_of_mass(p: *mut Cell, cmpos: &mut Vector) {
     if (*p).cellnode.mass > 0.0 {
-        for k in 0..types::NDIM {
+        for k in 0..NDIM {
             cmpos[k] /= (*p).cellnode.mass;
         }
     } else {
-        for k in 0..types::NDIM {
+        for k in 0..NDIM {
             cmpos[k] = (*p).cellnode.pos[k];
         }
     }
 }
 
-unsafe fn verify_center(p: *mut types::Cell, cmpos: &types::Vector, psize: types::Real) {
-    for k in 0..types::NDIM {
+unsafe fn verify_center(p: *mut Cell, cmpos: &Vector, psize: Real) -> Result<()> {
+    for k in 0..NDIM {
         if cmpos[k] < (*p).cellnode.pos[k] - psize / 2.0
             || (*p).cellnode.pos[k] + psize / 2.0 <= cmpos[k]
         {
-            crate::types::error("hackcofm: tree structure error\n");
+            return Err(TreeError::TreeStructure);
         }
     }
+    Ok(())
 }
 
-unsafe fn setrcrit(p: *mut types::Cell, cmpos: &types::Vector, psize: types::Real) {
-    if types::theta == 0.0 {
+unsafe fn setrcrit(p: *mut Cell, cmpos: &Vector, psize: Real) {
+    if theta == 0.0 {
         set_rcrit_exact(p);
     } else if SW94 {
         set_rcrit_sw94(p, cmpos, psize);
@@ -245,37 +261,37 @@ unsafe fn setrcrit(p: *mut types::Cell, cmpos: &types::Vector, psize: types::Rea
     }
 }
 
-unsafe fn set_rcrit_exact(p: *mut types::Cell) {
-    (*p).rcrit2 = mathfns::rsqr(2.0 * types::rsize);
+unsafe fn set_rcrit_exact(p: *mut Cell) {
+    (*p).rcrit2 = mathfns::rsqr(2.0 * rsize);
 }
 
-unsafe fn set_rcrit_sw94(p: *mut types::Cell, cmpos: &types::Vector, psize: types::Real) {
-    let mut bmax2: types::Real = 0.0;
-    for k in 0..types::NDIM {
+unsafe fn set_rcrit_sw94(p: *mut Cell, cmpos: &Vector, psize: Real) {
+    let mut bmax2: Real = 0.0;
+    for k in 0..NDIM {
         let d = cmpos[k] - (*p).cellnode.pos[k] + psize / 2.0;
         bmax2 += mathfns::rsqr(d.max(psize - d));
     }
-    (*p).rcrit2 = bmax2 / mathfns::rsqr(types::theta);
+    (*p).rcrit2 = bmax2 / mathfns::rsqr(theta);
 }
 
-unsafe fn set_rcrit_bh86(p: *mut types::Cell, psize: types::Real) {
-    (*p).rcrit2 = mathfns::rsqr(psize / types::theta);
+unsafe fn set_rcrit_bh86(p: *mut Cell, psize: Real) {
+    (*p).rcrit2 = mathfns::rsqr(psize / theta);
 }
 
-unsafe fn set_rcrit_default(p: *mut types::Cell, cmpos: &types::Vector, psize: types::Real) {
-    let mut d: types::Real = 0.0;
-    for k in 0..types::NDIM {
+unsafe fn set_rcrit_default(p: *mut Cell, cmpos: &Vector, psize: Real) {
+    let mut d: Real = 0.0;
+    for k in 0..NDIM {
         let dk = cmpos[k] - (*p).cellnode.pos[k];
         d += dk * dk;
     }
-    (*p).rcrit2 = mathfns::rsqr(psize / types::theta + d.sqrt());
+    (*p).rcrit2 = mathfns::rsqr(psize / theta + d.sqrt());
 }
 
-unsafe fn threadtree(p: *mut types::Node, n: *mut types::Node) {
+unsafe fn threadtree(p: *mut Node, n: *mut Node) {
     (*p).next = n;
-    if (*p).node_type == types::CELL {
-        let c = p as *mut types::Cell;
-        let mut desc: [*mut types::Node; types::NSUB + 1] = [std::ptr::null_mut(); types::NSUB + 1];
+    if (*p).node_type == CELL {
+        let c = p as *mut Cell;
+        let mut desc: [*mut Node; NSUB + 1] = [std::ptr::null_mut(); NSUB + 1];
         let ndesc = collect_descendants(c, &mut desc);
         (*c).more = desc[0];
         desc[ndesc] = n;
@@ -285,24 +301,24 @@ unsafe fn threadtree(p: *mut types::Node, n: *mut types::Node) {
     }
 }
 
-unsafe fn hackquad(p: *mut types::Cell) {
-    let mut desc: [*mut types::Node; types::NSUB] = [std::ptr::null_mut(); types::NSUB];
+unsafe fn hackquad(p: *mut Cell) {
+    let mut desc: [*mut Node; NSUB] = [std::ptr::null_mut(); NSUB];
     let ndesc = collect_descendants(p, &mut desc);
 
-    types::matrix_zero(&mut (*p).sorq.quad);
+    matrix_zero(&mut (*p).sorq.quad);
 
     for i in 0..ndesc {
         let q = desc[i];
-        if (*q).node_type == types::CELL {
-            hackquad(q as *mut types::Cell);
+        if (*q).node_type == CELL {
+            hackquad(q as *mut Cell);
         }
         accumulate_moment(p, q);
     }
 }
 
-unsafe fn collect_descendants(c: *mut types::Cell, desc: &mut [*mut types::Node]) -> usize {
+unsafe fn collect_descendants(c: *mut Cell, desc: &mut [*mut Node]) -> usize {
     let mut ndesc: usize = 0;
-    for i in 0..types::NSUB {
+    for i in 0..NSUB {
         if !(*c).sorq.subp[i].is_null() {
             desc[ndesc] = (*c).sorq.subp[i];
             ndesc += 1;
@@ -311,37 +327,37 @@ unsafe fn collect_descendants(c: *mut types::Cell, desc: &mut [*mut types::Node]
     ndesc
 }
 
-unsafe fn accumulate_moment(p: *mut types::Cell, q: *mut types::Node) {
+unsafe fn accumulate_moment(p: *mut Cell, q: *mut Node) {
     let dr = displacement(q, p);
     let mut tmpm = quadrupole_tensor(q, &dr);
-    if (*q).node_type == types::CELL {
-        let qm = &*(q as *mut types::Cell);
-        for j in 0..types::NDIM {
-            for k in 0..types::NDIM {
+    if (*q).node_type == CELL {
+        let qm = &*(q as *mut Cell);
+        for j in 0..NDIM {
+            for k in 0..NDIM {
                 tmpm[j][k] += qm.sorq.quad[j][k];
             }
         }
     }
-    for j in 0..types::NDIM {
-        for k in 0..types::NDIM {
+    for j in 0..NDIM {
+        for k in 0..NDIM {
             (*p).sorq.quad[j][k] += tmpm[j][k];
         }
     }
 }
 
-unsafe fn displacement(q: *mut types::Node, p: *mut types::Cell) -> types::Vector {
-    let mut dr: types::Vector = [0.0; types::NDIM];
-    for k in 0..types::NDIM {
+unsafe fn displacement(q: *mut Node, p: *mut Cell) -> Vector {
+    let mut dr: Vector = Vector::zero();
+    for k in 0..NDIM {
         dr[k] = (*q).pos[k] - (*p).cellnode.pos[k];
     }
     dr
 }
 
-unsafe fn quadrupole_tensor(q: *mut types::Node, dr: &types::Vector) -> types::Matrix {
+unsafe fn quadrupole_tensor(q: *mut Node, dr: &Vector) -> Matrix {
     let drsq = dot_product(dr);
-    let mut tmpm: types::Matrix = [[0.0; types::NDIM]; types::NDIM];
-    for j in 0..types::NDIM {
-        for k in 0..types::NDIM {
+    let mut tmpm: Matrix = Matrix::zero();
+    for j in 0..NDIM {
+        for k in 0..NDIM {
             let id_rsq = if j == k { drsq } else { 0.0 };
             tmpm[j][k] = (3.0 * dr[j] * dr[k] - id_rsq) * (*q).mass;
         }
@@ -349,22 +365,22 @@ unsafe fn quadrupole_tensor(q: *mut types::Node, dr: &types::Vector) -> types::M
     tmpm
 }
 
-fn dot_product(dr: &types::Vector) -> types::Real {
-    let mut drsq: types::Real = 0.0;
-    for k in 0..types::NDIM {
+fn dot_product(dr: &Vector) -> Real {
+    let mut drsq: Real = 0.0;
+    for k in 0..NDIM {
         drsq += dr[k] * dr[k];
     }
     drsq
 }
 
 pub fn tree_depth() -> i32 {
-    unsafe { types::tdepth }
+    unsafe { tdepth }
 }
 
 pub fn cell_count() -> i32 {
-    unsafe { types::ncell }
+    unsafe { ncell }
 }
 
 pub fn tree_build_time() -> f64 {
-    unsafe { types::cputree as f64 }
+    unsafe { cputree as f64 }
 }

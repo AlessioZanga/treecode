@@ -40,7 +40,7 @@ fn run_rust_with_prog(dir: &Path, prog: &str, args: &[&str]) -> String {
     let mut full: Vec<String> = vec![prog.to_string()];
     full.extend(args.iter().map(|s| s.to_string()));
     let refs: Vec<&str> = full.iter().map(|s| s.as_str()).collect();
-    treecode::treecode::run(&refs);
+    treecode::treecode::run(&refs).unwrap();
     drop(cap);
     std::fs::read_to_string(dir.join("stdout.txt")).unwrap()
 }

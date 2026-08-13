@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 libc = "0.2"
+thiserror = "2"
 
 [dev-dependencies]
 assert_cmd = "2.0"
