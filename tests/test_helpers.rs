@@ -65,17 +65,17 @@ fn tree_and_force_accessors() {
 }
 
 #[test]
-fn wrapper_save_restore_roundtrip() {
+fn save_restore_roundtrip() {
     let dir = tempfile::TempDir::new().unwrap();
     run_rust_in(dir.path(), &["nbody=30", "tstop=0.02", "dtout=0.01"]);
 
     let state = dir.path().join("w.rst");
     let state_str = state.display().to_string();
-    treecode::wrapper::savestate(&state_str);
+    treecode::treeio::savestate(&state_str);
     assert!(state.exists());
 
     run_rust_in(dir.path(), &["nbody=30", "tstop=0.03", "dtout=0.01"]);
-    treecode::wrapper::restorestate(&state_str);
+    treecode::treeio::restorestate(&state_str);
     let nbody = unsafe { treecode::types::nbody };
     assert_eq!(nbody, 30);
 }

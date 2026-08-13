@@ -14,7 +14,7 @@ static mut SUBNHIST: [i32; MAXLEVEL] = [0; MAXLEVEL];
 
 pub fn maketree(btab: &mut [types::Body], nbody: i32) {
     unsafe {
-        let cpustart = crate::clib::cputime();
+        let cpustart = crate::types::cputime();
         newtree();
         types::root = makecell();
         types::vector_zero(&mut (*types::root).cellnode.pos);
@@ -27,7 +27,7 @@ pub fn maketree(btab: &mut [types::Body], nbody: i32) {
         if types::usequad != 0 {
             hackquad(types::root);
         }
-        types::cputree = (crate::clib::cputime() - cpustart) as types::Real;
+        types::cputree = (crate::types::cputime() - cpustart) as types::Real;
     }
 }
 
@@ -39,10 +39,10 @@ unsafe fn load_all_bodies(btab: *mut types::Body, nbody: i32) {
 
 unsafe fn parse_options() {
     let opts = crate::getparam::getparam("options");
-    BH86 = crate::clib::scanopt(&opts, "bh86");
-    SW94 = crate::clib::scanopt(&opts, "sw94");
+    BH86 = crate::types::scanopt(&opts, "bh86");
+    SW94 = crate::types::scanopt(&opts, "sw94");
     if BH86 && SW94 {
-        crate::clib::error("maketree: incompatible options bh86 and sw94\n");
+        crate::types::error("maketree: incompatible options bh86 and sw94\n");
     }
 }
 
@@ -76,7 +76,7 @@ unsafe fn newtree() {
 unsafe fn makecell() -> *mut types::Cell {
     let c: *mut types::Cell;
     if FREECELL.is_null() {
-        c = crate::clib::allocate(std::mem::size_of::<types::Cell>()) as *mut types::Cell;
+        c = crate::types::allocate(std::mem::size_of::<types::Cell>()) as *mut types::Cell;
     } else {
         c = FREECELL as *mut types::Cell;
         FREECELL = (*FREECELL).next;
@@ -135,7 +135,7 @@ unsafe fn require_distinct_positions(p: *mut types::Body, other: *mut types::Bod
         dist2 += d * d;
     }
     if dist2 == 0.0 {
-        crate::clib::error("loadbody: two bodies have same position\n");
+        crate::types::error("loadbody: two bodies have same position\n");
     }
 }
 
@@ -228,7 +228,7 @@ unsafe fn verify_center(p: *mut types::Cell, cmpos: &types::Vector, psize: types
         if cmpos[k] < (*p).cellnode.pos[k] - psize / 2.0
             || (*p).cellnode.pos[k] + psize / 2.0 <= cmpos[k]
         {
-            crate::clib::error("hackcofm: tree structure error\n");
+            crate::types::error("hackcofm: tree structure error\n");
         }
     }
 }

@@ -35,7 +35,7 @@ pub fn run(argv: &[&str]) {
     unsafe {
         let headline_str = "Hierarchical N-body code (theta scan)";
         types::headline =
-            crate::clib::allocate(headline_str.len() + 1) as *mut std::os::raw::c_char;
+            crate::types::allocate(headline_str.len() + 1) as *mut std::os::raw::c_char;
         std::ptr::copy_nonoverlapping(
             headline_str.as_ptr(),
             types::headline as *mut u8,
@@ -44,19 +44,19 @@ pub fn run(argv: &[&str]) {
         *types::headline.add(headline_str.len()) = 0;
 
         startrun();
-        crate::wrapper::startoutput();
+        crate::treeio::startoutput();
 
         if types::nstep == 0 {
             treeforce();
-            crate::wrapper::output();
+            crate::treeio::output();
         }
         while types::tstop as f64 - types::tnow as f64 > 0.01 * types::dtime as f64 {
             stepsystem();
-            crate::wrapper::output();
+            crate::treeio::output();
         }
         while types::tstop as f64 - types::tnow as f64 > 0.01 * types::dtime as f64 {
             stepsystem();
-            crate::wrapper::output();
+            crate::treeio::output();
         }
     }
 }
@@ -67,12 +67,12 @@ unsafe fn treeforce() {
     for i in 0..nbody {
         (*bodytab.add(i)).bodynode.update = 1;
     }
-    crate::wrapper::maketree(
+    crate::treeload::maketree(
         std::slice::from_raw_parts_mut(types::bodytab, nbody),
         types::nbody,
     );
-    crate::wrapper::gravcalc();
-    crate::wrapper::forcereport();
+    crate::treegrav::gravcalc();
+    crate::treeio::forcereport();
 }
 
 unsafe fn stepsystem() {
@@ -106,15 +106,15 @@ unsafe fn startrun() {
     let outfile = crate::getparam::getparam("out");
     let savefile = crate::getparam::getparam("save");
 
-    types::infile = crate::clib::allocate(infile.len() + 1) as *mut std::os::raw::c_char;
+    types::infile = crate::types::allocate(infile.len() + 1) as *mut std::os::raw::c_char;
     std::ptr::copy_nonoverlapping(infile.as_ptr(), types::infile as *mut u8, infile.len());
     *types::infile.add(infile.len()) = 0;
 
-    types::outfile = crate::clib::allocate(outfile.len() + 1) as *mut std::os::raw::c_char;
+    types::outfile = crate::types::allocate(outfile.len() + 1) as *mut std::os::raw::c_char;
     std::ptr::copy_nonoverlapping(outfile.as_ptr(), types::outfile as *mut u8, outfile.len());
     *types::outfile.add(outfile.len()) = 0;
 
-    types::savefile = crate::clib::allocate(savefile.len() + 1) as *mut std::os::raw::c_char;
+    types::savefile = crate::types::allocate(savefile.len() + 1) as *mut std::os::raw::c_char;
     std::ptr::copy_nonoverlapping(
         savefile.as_ptr(),
         types::savefile as *mut u8,
@@ -152,7 +152,7 @@ unsafe fn startrun() {
         let opts = crate::getparam::getparam("options");
         let opts_c = std::ffi::CString::new(opts).unwrap();
         types::options =
-            crate::clib::allocate(opts_c.as_bytes().len() + 1) as *mut std::os::raw::c_char;
+            crate::types::allocate(opts_c.as_bytes().len() + 1) as *mut std::os::raw::c_char;
         std::ptr::copy_nonoverlapping(
             opts_c.as_ptr() as *mut u8,
             types::options as *mut u8,
@@ -160,11 +160,11 @@ unsafe fn startrun() {
         );
 
         if !infile.is_empty() {
-            crate::wrapper::inputdata();
+            crate::treeio::inputdata();
         } else {
             types::nbody = crate::getparam::getiparam("nbody");
             if types::nbody < 1 {
-                crate::clib::error("startrun: absurd value for nbody\n");
+                crate::types::error("startrun: absurd value for nbody\n");
             }
             let seed = crate::getparam::getiparam("seed");
             extern "C" {
@@ -179,7 +179,7 @@ unsafe fn startrun() {
         types::nstep = 0;
         types::tout = types::tnow;
     } else {
-        crate::wrapper::restorestate(&restore);
+        crate::treeio::restorestate(&restore);
 
         if crate::getparam::getparamstat("eps") & 0o4 != 0 {
             types::eps = crate::getparam::getdparam("eps") as types::Real;
@@ -194,7 +194,7 @@ unsafe fn startrun() {
             let opts = crate::getparam::getparam("options");
             let opts_c = std::ffi::CString::new(opts).unwrap();
             types::options =
-                crate::clib::allocate(opts_c.as_bytes().len() + 1) as *mut std::os::raw::c_char;
+                crate::types::allocate(opts_c.as_bytes().len() + 1) as *mut std::os::raw::c_char;
             std::ptr::copy_nonoverlapping(
                 opts_c.as_ptr() as *mut u8,
                 types::options as *mut u8,
@@ -215,7 +215,7 @@ unsafe fn startrun() {
         };
 
         let opts = crate::getparam::getparam("options");
-        if crate::clib::scanopt(&opts, "new-tout") {
+        if crate::types::scanopt(&opts, "new-tout") {
             types::tout = types::tnow + types::dtout;
         }
     }
@@ -226,10 +226,10 @@ unsafe fn testdata() {
     let nb = types::nbody;
 
     types::bodytab =
-        crate::clib::allocate(nbody * std::mem::size_of::<types::Body>()) as *mut types::Body;
+        crate::types::allocate(nbody * std::mem::size_of::<types::Body>()) as *mut types::Body;
 
-    let rsc = ((3.0 * std::f64::consts::PI) / 16.0) as f32;
-    let vsc = ((1.0 / rsc as f64) as f32).sqrt();
+    let rsc = 3.0 * std::f32::consts::PI / 16.0;
+    let vsc = (1.0 / rsc).sqrt();
 
     let mut rcm: types::Vector = [0.0; types::NDIM];
     let mut vcm: types::Vector = [0.0; types::NDIM];

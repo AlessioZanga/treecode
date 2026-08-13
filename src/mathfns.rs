@@ -9,19 +9,19 @@ pub fn rqbe(x: Real) -> Real {
 }
 
 pub fn rlog2(x: Real) -> Real {
-    (x as f64).log2() as Real
+    x.log2()
 }
 
 pub fn rexp2(x: Real) -> Real {
-    ((x as f64) * std::f64::consts::LN_2).exp() as Real
+    x.exp2()
 }
 
 pub fn rdex(x: Real) -> Real {
-    ((x as f64) * std::f64::consts::LN_10).exp() as Real
+    10.0f32.powf(x)
 }
 
 pub fn fcbrt(x: f32) -> f32 {
-    (x as f64).cbrt() as f32
+    x.cbrt()
 }
 
 pub fn xrandom(xl: f64, xh: f64) -> f64 {

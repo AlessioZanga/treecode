@@ -1,4 +1,3 @@
-pub mod clib;
 pub mod getparam;
 pub mod mathfns;
 pub mod treecode;
@@ -7,4 +6,3 @@ pub mod treeio;
 pub mod treeload;
 pub mod types;
 pub mod vector;
-pub mod wrapper;

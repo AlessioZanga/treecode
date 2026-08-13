@@ -13,11 +13,11 @@ pub fn gravcalc() {
         let rmid: types::Vector = [0.0; types::NDIM];
 
         ACTLEN = estimate_active_length();
-        ACTIVE = crate::clib::allocate(ACTLEN as usize * std::mem::size_of::<*mut types::Node>())
+        ACTIVE = crate::types::allocate(ACTLEN as usize * std::mem::size_of::<*mut types::Node>())
             as *mut *mut types::Node;
-        INTERACT = crate::clib::allocate(ACTLEN as usize * std::mem::size_of::<types::Cell>())
+        INTERACT = crate::types::allocate(ACTLEN as usize * std::mem::size_of::<types::Cell>())
             as *mut types::Cell;
-        let cpustart = crate::clib::cputime();
+        let cpustart = crate::types::cputime();
         types::actmax = 0;
         types::nbbcalc = 0;
         types::nbccalc = 0;
@@ -31,14 +31,14 @@ pub fn gravcalc() {
             types::rsize,
             rmid,
         );
-        types::cpuforce = (crate::clib::cputime() - cpustart) as types::Real;
+        types::cpuforce = (crate::types::cputime() - cpustart) as types::Real;
         libc::free(ACTIVE as *mut libc::c_void);
         libc::free(INTERACT as *mut libc::c_void);
     }
 }
 
 unsafe fn estimate_active_length() -> i32 {
-    let base = (FACTIVE as f64 * 216.0 * types::tdepth as f64) as i32;
+    let base = (FACTIVE * 216.0 * types::tdepth as types::Real) as i32;
     (base as types::Real * types::theta.powf(-2.5)) as i32
 }
 
@@ -68,7 +68,7 @@ unsafe fn walktree(
                     cptr = cptr.add(1);
                 } else {
                     if np.offset_from(ACTIVE) >= actsafe as isize {
-                        crate::clib::error("walktree: active list overflow\n");
+                        crate::types::error("walktree: active list overflow\n");
                     }
                     let mut q = (*(apnode as *mut types::Cell)).more;
                     while q != (*apnode).next {
@@ -92,7 +92,7 @@ unsafe fn walktree(
             walksub(nptr, np, cptr, bptr, p, psize, pmid);
         } else {
             if (*p).node_type != types::BODY {
-                crate::clib::error("walktree: recursion terminated with cell\n");
+                crate::types::error("walktree: recursion terminated with cell\n");
             }
             gravsum(p as *mut types::Body, cptr, bptr);
         }

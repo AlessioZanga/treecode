@@ -24,7 +24,7 @@ fn getversion() -> String {
 }
 
 fn alloc_c_string(s: &str) -> *mut c_char {
-    let p = crate::clib::allocate(s.len() + 1);
+    let p = crate::types::allocate(s.len() + 1);
     unsafe {
         std::ptr::copy_nonoverlapping(s.as_ptr(), p, s.len());
         *p.add(s.len()) = 0;
@@ -52,11 +52,11 @@ pub fn inputdata() {
 
     let nbody = parse_i32(&toks, &mut i);
     if nbody < 1 {
-        crate::clib::error(&format!("inputdata: nbody = {} is absurd\n", nbody));
+        crate::types::error(&format!("inputdata: nbody = {} is absurd\n", nbody));
     }
     let ndim = parse_i32(&toks, &mut i);
     if ndim != types::NDIM as i32 {
-        crate::clib::error(&format!(
+        crate::types::error(&format!(
             "inputdata: ndim = {}; expected {}\n",
             ndim,
             types::NDIM
@@ -67,7 +67,7 @@ pub fn inputdata() {
     unsafe {
         types::tnow = tnow;
         types::nbody = nbody;
-        types::bodytab = crate::clib::allocate(nbody as usize * std::mem::size_of::<types::Body>())
+        types::bodytab = crate::types::allocate(nbody as usize * std::mem::size_of::<types::Body>())
             as *mut types::Body;
 
         for j in 0..nbody as usize {
@@ -92,7 +92,7 @@ pub fn inputdata() {
         }
 
         let opts = c_str_to_string(types::options);
-        if crate::clib::scanopt(&opts, "reset-time") {
+        if crate::types::scanopt(&opts, "reset-time") {
             types::tnow = 0.0;
         }
     }
@@ -101,7 +101,7 @@ pub fn inputdata() {
 fn read_input_tokens() -> Vec<String> {
     let infile = c_str_to_string(unsafe { types::infile });
     let contents = std::fs::read_to_string(&infile).unwrap_or_else(|_| {
-        crate::clib::error(&format!("inputdata: cannot open file \"{}\"\n", infile));
+        crate::types::error(&format!("inputdata: cannot open file \"{}\"\n", infile));
         unreachable!()
     });
     contents.split_whitespace().map(|s| s.to_string()).collect()
@@ -109,24 +109,24 @@ fn read_input_tokens() -> Vec<String> {
 
 fn parse_i32(toks: &[String], i: &mut usize) -> i32 {
     let s = toks.get(*i).unwrap_or_else(|| {
-        crate::clib::error("in_int: input conversion error\n");
+        crate::types::error("in_int: input conversion error\n");
         unreachable!()
     });
     *i += 1;
     s.parse().unwrap_or_else(|_| {
-        crate::clib::error("in_int: input conversion error\n");
+        crate::types::error("in_int: input conversion error\n");
         unreachable!()
     })
 }
 
 fn parse_f64(toks: &[String], i: &mut usize) -> f64 {
     let s = toks.get(*i).unwrap_or_else(|| {
-        crate::clib::error("in_real: input conversion error\n");
+        crate::types::error("in_real: input conversion error\n");
         unreachable!()
     });
     *i += 1;
     s.parse().unwrap_or_else(|_| {
-        crate::clib::error("in_real: input conversion error\n");
+        crate::types::error("in_real: input conversion error\n");
         unreachable!()
     })
 }
@@ -213,7 +213,7 @@ pub fn output() {
             -types::ETOT[1] / types::ETOT[2],
             cmabs,
             amabs,
-            crate::clib::cputime()
+            crate::types::cputime()
         );
 
         let teff = types::tnow + types::dtime / 8.0;
@@ -241,7 +241,7 @@ pub fn outputdata() {
     let mut f = BufWriter::new(match file {
         Ok(f) => f,
         Err(_) => {
-            crate::clib::error("outputdata: cannot open output file\n");
+            crate::types::error("outputdata: cannot open output file\n");
             unreachable!()
         }
     });
@@ -260,12 +260,12 @@ pub fn outputdata() {
             out_vector(&mut f, (*types::bodytab.add(j)).vel);
         }
         let opts = c_str_to_string(types::options);
-        if crate::clib::scanopt(&opts, "out-phi") {
+        if crate::types::scanopt(&opts, "out-phi") {
             for j in 0..types::nbody as usize {
                 out_real(&mut f, (*types::bodytab.add(j)).phi);
             }
         }
-        if crate::clib::scanopt(&opts, "out-acc") {
+        if crate::types::scanopt(&opts, "out-acc") {
             for j in 0..types::nbody as usize {
                 out_vector(&mut f, (*types::bodytab.add(j)).acc);
             }
@@ -283,21 +283,21 @@ pub fn outputdata() {
 fn out_int(f: &mut impl Write, v: i32) {
     let line = format!(" {}\n", v);
     if f.write_all(line.as_bytes()).is_err() {
-        crate::clib::error("out_int: fprintf failed\n");
+        crate::types::error("out_int: fprintf failed\n");
     }
 }
 
 fn out_real(f: &mut impl Write, v: types::Real) {
     let line = format!(" {}\n", fmt_e14(v));
     if f.write_all(line.as_bytes()).is_err() {
-        crate::clib::error("out_real: fprintf failed\n");
+        crate::types::error("out_real: fprintf failed\n");
     }
 }
 
 fn out_vector(f: &mut impl Write, v: types::Vector) {
     let line = format!(" {} {} {}\n", fmt_e14(v[0]), fmt_e14(v[1]), fmt_e14(v[2]));
     if f.write_all(line.as_bytes()).is_err() {
-        crate::clib::error("out_vector: fprintf failed\n");
+        crate::types::error("out_vector: fprintf failed\n");
     }
 }
 
@@ -361,7 +361,7 @@ pub fn savestate(pattern: &str) {
     let mut f = BufWriter::new(match file {
         Ok(f) => f,
         Err(_) => {
-            crate::clib::error("savestate: cannot create file\n");
+            crate::types::error("savestate: cannot create file\n");
             unreachable!()
         }
     });
@@ -387,7 +387,7 @@ pub fn savestate(pattern: &str) {
 
 fn write_bytes(f: &mut impl Write, buf: &[u8]) {
     if f.write_all(buf).is_err() {
-        crate::clib::error("savestate: fwrite failed\n");
+        crate::types::error("savestate: fwrite failed\n");
     }
 }
 
@@ -421,7 +421,7 @@ pub fn restorestate(file: &str) {
     let mut f = BufReader::new(match f {
         Ok(f) => f,
         Err(_) => {
-            crate::clib::error("restorestate: cannot open file\n");
+            crate::types::error("restorestate: cannot open file\n");
             unreachable!()
         }
     });
@@ -450,20 +450,20 @@ pub fn restorestate(file: &str) {
         types::nbody = read_int(&mut f);
         let nb = types::nbody as usize;
         types::bodytab =
-            crate::clib::allocate(nb * std::mem::size_of::<types::Body>()) as *mut types::Body;
+            crate::types::allocate(nb * std::mem::size_of::<types::Body>()) as *mut types::Body;
         let slice = std::slice::from_raw_parts_mut(
             types::bodytab as *mut u8,
             nb * std::mem::size_of::<types::Body>(),
         );
         if f.read_exact(slice).is_err() {
-            crate::clib::error("restorestate: fread failed\n");
+            crate::types::error("restorestate: fread failed\n");
         }
     }
 }
 
 fn read_bytes(f: &mut impl Read, buf: &mut [u8]) {
     if f.read_exact(buf).is_err() {
-        crate::clib::error("restorestate: fread failed\n");
+        crate::types::error("restorestate: fread failed\n");
     }
 }
 

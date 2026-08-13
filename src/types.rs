@@ -1,6 +1,51 @@
 #![allow(clippy::needless_range_loop)]
+#![allow(non_upper_case_globals)]
 
-use std::os::raw::{c_char, c_double, c_int, c_short, c_void};
+use std::io::Write;
+use std::os::raw::{c_char, c_int, c_short};
+
+pub fn allocate(nb: usize) -> *mut u8 {
+    unsafe {
+        let ptr = libc::calloc(nb as libc::size_t, 1) as *mut u8;
+        if ptr.is_null() {
+            eprintln!("allocate: not enough memory ({} bytes)", nb);
+            std::process::exit(1);
+        }
+        ptr
+    }
+}
+
+pub fn cputime() -> f64 {
+    unsafe {
+        let mut buffer: libc::tms = std::mem::zeroed();
+        if libc::times(&mut buffer) == -1 {
+            eprintln!("cputime: times() call failed");
+            std::process::exit(1);
+        }
+        let hz = libc::sysconf(libc::_SC_CLK_TCK) as f64;
+        (buffer.tms_utime + buffer.tms_stime) as f64 / (60.0 * hz)
+    }
+}
+
+pub fn eprintf(fmt: &str) {
+    eprint!("{}", fmt);
+    let _ = std::io::stderr().flush();
+}
+
+pub fn error(fmt: &str) {
+    eprint!("{}", fmt);
+    let _ = std::io::stderr().flush();
+    std::process::exit(1);
+}
+
+pub fn scanopt(opt: &str, key: &str) -> bool {
+    for word in opt.split(',') {
+        if word == key {
+            return true;
+        }
+    }
+    false
+}
 
 pub type Real = f32;
 pub type Vector = [Real; 3];
@@ -58,55 +103,30 @@ pub struct Cell {
     pub sorq: Sorq,
 }
 
-#[no_mangle]
 pub static mut root: *mut Cell = std::ptr::null_mut();
-#[no_mangle]
 pub static mut rsize: Real = 0.0;
-#[no_mangle]
 pub static mut ncell: c_int = 0;
-#[no_mangle]
 pub static mut tdepth: c_int = 0;
-#[no_mangle]
 pub static mut cputree: Real = 0.0;
-#[no_mangle]
 pub static mut theta: Real = 0.0;
-#[no_mangle]
 pub static mut options: *mut c_char = std::ptr::null_mut();
-#[no_mangle]
 pub static mut usequad: u8 = 0;
-#[no_mangle]
 pub static mut eps: Real = 0.0;
-#[no_mangle]
 pub static mut actmax: c_int = 0;
-#[no_mangle]
 pub static mut nbbcalc: c_int = 0;
-#[no_mangle]
 pub static mut nbccalc: c_int = 0;
-#[no_mangle]
 pub static mut cpuforce: Real = 0.0;
-#[no_mangle]
 pub static mut infile: *mut c_char = std::ptr::null_mut();
-#[no_mangle]
 pub static mut outfile: *mut c_char = std::ptr::null_mut();
-#[no_mangle]
 pub static mut savefile: *mut c_char = std::ptr::null_mut();
-#[no_mangle]
 pub static mut dtime: Real = 0.0;
-#[no_mangle]
 pub static mut dtout: Real = 0.0;
-#[no_mangle]
 pub static mut tstop: Real = 0.0;
-#[no_mangle]
 pub static mut headline: *mut c_char = std::ptr::null_mut();
-#[no_mangle]
 pub static mut tnow: Real = 0.0;
-#[no_mangle]
 pub static mut tout: Real = 0.0;
-#[no_mangle]
 pub static mut nstep: c_int = 0;
-#[no_mangle]
 pub static mut nbody: c_int = 0;
-#[no_mangle]
 pub static mut bodytab: *mut Body = std::ptr::null_mut();
 
 pub static mut MTOT: Real = 0.0;
@@ -116,45 +136,6 @@ pub static mut PETEN: Matrix = [[0.0; NDIM]; NDIM];
 pub static mut CMPOS: Vector = [0.0; NDIM];
 pub static mut CMVEL: Vector = [0.0; NDIM];
 pub static mut AMVEC: Vector = [0.0; NDIM];
-
-extern "C" {
-    pub fn maketree(btab: *mut Body, nbody: c_int);
-    pub fn gravcalc();
-    pub fn inputdata();
-    pub fn startoutput();
-    pub fn forcereport();
-    pub fn output();
-    pub fn outputdata();
-    pub fn savestate(pattern: *const c_char);
-    pub fn restorestate(file: *const c_char);
-    pub fn initparam(argv: *mut *mut c_char, defv: *mut *mut c_char);
-    pub fn getparam(name: *const c_char) -> *mut c_char;
-    pub fn getiparam(name: *const c_char) -> c_int;
-    pub fn getdparam(name: *const c_char) -> c_double;
-    pub fn getbparam(name: *const c_char) -> c_short;
-    pub fn getparamstat(name: *const c_char) -> c_int;
-
-    pub fn allocate(nb: c_int) -> *mut c_void;
-    pub fn cputime() -> c_double;
-    pub fn error(fmt: *const c_char, ...);
-    pub fn eprintf(fmt: *const c_char, ...);
-    pub fn scanopt(opt: *const c_char, key: *const c_char) -> c_short;
-    pub fn stropen(name: *const c_char, mode: *const c_char) -> *mut std::ffi::c_void;
-
-    pub fn fsqr(x: Real) -> Real;
-    pub fn fqbe(x: Real) -> Real;
-    pub fn flog2(x: Real) -> Real;
-    pub fn fexp2(x: Real) -> Real;
-    pub fn fdex(x: Real) -> Real;
-    pub fn fcbrt(x: f32) -> f32;
-    pub fn xrandom(xl: c_double, xh: c_double) -> c_double;
-    pub fn grandom(mean: c_double, sdev: c_double) -> c_double;
-    pub fn fpickshell(vec: *mut Real, ndim: c_int, rad: Real);
-    pub fn fpickball(vec: *mut Real, ndim: c_int, rad: Real);
-    pub fn fpickbox(vec: *mut Real, ndim: c_int, rad: Real);
-
-    pub fn treecode_c_main(argc: c_int, argv: *mut *mut c_char) -> c_int;
-}
 
 pub fn vector_zero(v: &mut Vector) {
     for i in 0..NDIM {
