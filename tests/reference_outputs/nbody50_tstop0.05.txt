@@ -1,0 +1,23 @@
+
+Hierarchical N-body code (theta scan)
+
+   nbody     dtime       eps     theta   usequad     dtout     tstop
+      50   0.03125    0.0250      1.00     false   0.02500    0.0500
+
+	   rsize  tdepth   ftree  actmax    nbbtot    nbctot   CPUfc
+	     8.0       6   2.140      84      1548       334   0.000
+
+        time   |T+U|       T      -U    -T/U  |Vcom|  |Jtot|  CPUtot
+       0.000 0.34287 0.28737 0.63025 0.45597 0.00000 0.09768   0.000
+
+	   rsize  tdepth   ftree  actmax    nbbtot    nbctot   CPUfc
+	     8.0       5   2.195      85      1586       311   0.000
+
+        time   |T+U|       T      -U    -T/U  |Vcom|  |Jtot|  CPUtot
+       0.031 0.34281 0.28674 0.62956 0.45547 0.00006 0.09769   0.000
+
+	   rsize  tdepth   ftree  actmax    nbbtot    nbctot   CPUfc
+	     8.0       5   2.361      82      1806       199   0.000
+
+        time   |T+U|       T      -U    -T/U  |Vcom|  |Jtot|  CPUtot
+       0.062 0.34284 0.28731 0.63015 0.45594 0.00010 0.09770   0.000
