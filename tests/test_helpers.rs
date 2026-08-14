@@ -1,3 +1,4 @@
+use std::io::Cursor;
 use std::os::unix::io::RawFd;
 use std::path::{Path, PathBuf};
 
@@ -81,6 +82,24 @@ fn save_restore_roundtrip() {
     run_rust_in(dir.path(), &["nbody=30", "tstop=0.03", "dtout=0.01"]);
     tree.restorestate(&state_str).unwrap();
     assert_eq!(tree.nbody, 30);
+}
+
+#[test]
+fn save_restore_roundtrip_via_writer() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let tree = run_rust_in(dir.path(), &["nbody=30", "tstop=0.02", "dtout=0.01"]);
+
+    let mass0 = tree.bodytab[0].bodynode.mass;
+
+    // Exercise the injectable I/O core directly: serialize into a Vec<u8>
+    // instead of opening a file on disk.
+    let mut buf: Vec<u8> = Vec::new();
+    tree.savestate_to(&mut buf).unwrap();
+
+    let mut restored = treecode::treecode::Tree::new();
+    restored.restorestate_from(&mut Cursor::new(buf)).unwrap();
+    assert_eq!(restored.nbody, 30);
+    assert_eq!(restored.bodytab[0].bodynode.mass, mass0);
 }
 
 #[test]

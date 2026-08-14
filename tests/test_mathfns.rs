@@ -1,5 +1,6 @@
 use approx::assert_relative_eq;
 use treecode::mathfns;
+use treecode::rng;
 use treecode::types::{scanopt, Vector};
 
 #[test]
@@ -52,18 +53,20 @@ fn test_fcbrt() {
 
 #[test]
 fn test_xrandom_range() {
+    let mut rng = rng::RngState::new(42);
     for _ in 0..1000 {
-        let val = mathfns::xrandom(-1.0, 1.0);
+        let val = rng::xrandom(&mut rng, -1.0, 1.0);
         assert!((-1.0..=1.0).contains(&val), "xrandom out of range: {}", val);
     }
 }
 
 #[test]
 fn test_xrandom_distribution() {
+    let mut rng = rng::RngState::new(42);
     let n = 10000;
     let mut sum = 0.0;
     for _ in 0..n {
-        sum += mathfns::xrandom(0.0, 1.0);
+        sum += rng::xrandom(&mut rng, 0.0, 1.0);
     }
     let mean = sum / n as f64;
     assert_relative_eq!(mean, 0.5, max_relative = 0.1);
@@ -71,10 +74,11 @@ fn test_xrandom_distribution() {
 
 #[test]
 fn test_grandom_distribution() {
+    let mut rng = rng::RngState::new(42);
     let n = 10000;
     let mut sum = 0.0;
     for _ in 0..n {
-        sum += mathfns::grandom(0.0, 1.0);
+        sum += rng::grandom(&mut rng, 0.0, 1.0);
     }
     let mean = sum / n as f64;
     assert_relative_eq!(mean, 0.0, epsilon = 0.1);
@@ -82,9 +86,10 @@ fn test_grandom_distribution() {
 
 #[test]
 fn test_pickshell_in_range() {
+    let mut rng = rng::RngState::new(42);
     let mut vec = Vector::zero();
     for _ in 0..100 {
-        mathfns::pickshell(&mut vec, 3, 1.0);
+        rng::pickshell(&mut rng, &mut vec, 3, 1.0);
         let r: f32 = vec.iter().map(|x| x * x).sum();
         assert_relative_eq!(r.sqrt(), 1.0, max_relative = 1e-4);
     }
@@ -92,9 +97,10 @@ fn test_pickshell_in_range() {
 
 #[test]
 fn test_pickball_in_range() {
+    let mut rng = rng::RngState::new(42);
     let mut vec = Vector::zero();
     for _ in 0..100 {
-        mathfns::pickball(&mut vec, 3, 1.0);
+        rng::pickball(&mut rng, &mut vec, 3, 1.0);
         let r: f32 = vec.iter().map(|x| x * x).sum();
         assert!(r <= 1.001, "pickball outside unit ball: {:?}", vec);
     }
@@ -102,9 +108,10 @@ fn test_pickball_in_range() {
 
 #[test]
 fn test_pickbox_in_range() {
+    let mut rng = rng::RngState::new(42);
     let mut vec = Vector::zero();
     for _ in 0..100 {
-        mathfns::pickbox(&mut vec, 3, 1.0);
+        rng::pickbox(&mut rng, &mut vec, 3, 1.0);
         for v in &vec {
             assert!(v.abs() <= 1.0, "pickbox outside cube: {:?}", vec);
         }

@@ -11,12 +11,12 @@ use crate::vecmath::{matrix_zero, vector_zero};
 
 const E_WIDTH: usize = 14;
 
-fn getargv0() -> String {
-    getparam::getparam("argv0").unwrap()
+fn getargv0(config: &getparam::Config) -> String {
+    config.getparam("argv0").unwrap()
 }
 
-fn getversion() -> String {
-    getparam::getparam("VERSION").unwrap()
+fn getversion(config: &getparam::Config) -> String {
+    config.getparam("VERSION").unwrap()
 }
 
 fn fmt_e14(v: Real) -> String {
@@ -255,34 +255,40 @@ impl Tree {
             std::fs::File::create(&name)
         };
         let mut f = BufWriter::new(file.map_err(|_| TreeError::OutputFileOpen)?);
+        self.outputdata_to(&mut f)?;
+        println!("\n\tdata output to file {} at time {:.6}", name, self.tnow);
+        self.tout += self.dtout;
+        Ok(())
+    }
 
-        out_int(&mut f, self.nbody)?;
-        out_int(&mut f, NDIM as i32)?;
-        out_real(&mut f, self.tnow)?;
+    /// Write the body snapshot to an arbitrary [`Write`] sink. This is the
+    /// injectable core of [`Tree::outputdata`]; the binary opens the `out=`
+    /// file and passes a `BufWriter`, while tests can capture into a `Vec<u8>`.
+    pub fn outputdata_to(&self, f: &mut impl Write) -> Result<()> {
+        out_int(f, self.nbody)?;
+        out_int(f, NDIM as i32)?;
+        out_real(f, self.tnow)?;
         let nb = self.nbody as usize;
         for j in 0..nb {
-            out_real(&mut f, self.bodytab[j].bodynode.mass)?;
+            out_real(f, self.bodytab[j].bodynode.mass)?;
         }
         for j in 0..nb {
-            out_vector(&mut f, self.bodytab[j].bodynode.pos)?;
+            out_vector(f, self.bodytab[j].bodynode.pos)?;
         }
         for j in 0..nb {
-            out_vector(&mut f, self.bodytab[j].vel)?;
+            out_vector(f, self.bodytab[j].vel)?;
         }
         let opts = self.options.clone();
         if crate::types::scanopt(&opts, "out-phi") {
             for j in 0..nb {
-                out_real(&mut f, self.bodytab[j].phi)?;
+                out_real(f, self.bodytab[j].phi)?;
             }
         }
         if crate::types::scanopt(&opts, "out-acc") {
             for j in 0..nb {
-                out_vector(&mut f, self.bodytab[j].acc)?;
+                out_vector(f, self.bodytab[j].acc)?;
             }
         }
-
-        println!("\n\tdata output to file {} at time {:.6}", name, self.tnow);
-        self.tout += self.dtout;
         Ok(())
     }
 
@@ -345,22 +351,29 @@ impl Tree {
 
         let f = std::fs::File::create(&name).map_err(|_| TreeError::FileCreate(name))?;
         let mut f = BufWriter::new(f);
+        self.savestate_to(&mut f)
+    }
 
-        write_string(&mut f, &getargv0())?;
-        write_string(&mut f, &getversion())?;
-        write_real(&mut f, self.dtime)?;
-        write_real(&mut f, self.theta)?;
-        write_bytes(&mut f, &[self.usequad])?;
-        write_real(&mut f, self.eps)?;
-        write_string(&mut f, &self.options)?;
-        write_real(&mut f, self.tstop)?;
-        write_real(&mut f, self.dtout)?;
-        write_real(&mut f, self.tnow)?;
-        write_real(&mut f, self.tout)?;
-        write_int(&mut f, self.nstep)?;
-        write_real(&mut f, self.rsize)?;
-        write_int(&mut f, self.nbody)?;
-        self.write_bodytab(&mut f)?;
+    /// Serialize the full simulation snapshot to an arbitrary [`Write`] sink.
+    /// This is the injectable core of [`Tree::savestate`]; the binary opens the
+    /// `save=` file and passes a `BufWriter`, while tests can capture into a
+    /// `Vec<u8>`.
+    pub fn savestate_to(&self, f: &mut impl Write) -> Result<()> {
+        write_string(f, &getargv0(&self.config))?;
+        write_string(f, &getversion(&self.config))?;
+        write_real(f, self.dtime)?;
+        write_real(f, self.theta)?;
+        write_bytes(f, &[self.usequad])?;
+        write_real(f, self.eps)?;
+        write_string(f, &self.options)?;
+        write_real(f, self.tstop)?;
+        write_real(f, self.dtout)?;
+        write_real(f, self.tnow)?;
+        write_real(f, self.tout)?;
+        write_int(f, self.nstep)?;
+        write_real(f, self.rsize)?;
+        write_int(f, self.nbody)?;
+        self.write_bodytab(f)?;
         Ok(())
     }
 
@@ -378,27 +391,34 @@ impl Tree {
     pub fn restorestate(&mut self, file: &str) -> Result<()> {
         let f = std::fs::File::open(file).map_err(|_| TreeError::FileOpen(file.to_string()))?;
         let mut f = BufReader::new(f);
+        self.restorestate_from(&mut f)
+    }
 
-        let program = read_string(&mut f)?;
-        let version = read_string(&mut f)?;
-        if program != getargv0() || version != getversion() {
+    /// Deserialize a simulation snapshot from an arbitrary [`Read`] source. This
+    /// is the injectable core of [`Tree::restorestate`]; the binary opens the
+    /// `restore=` file and passes a `BufReader`, while tests can replay from a
+    /// `Cursor<Vec<u8>>`.
+    pub fn restorestate_from(&mut self, f: &mut impl Read) -> Result<()> {
+        let program = read_string(f)?;
+        let version = read_string(f)?;
+        if program != getargv0(&self.config) || version != getversion(&self.config) {
             println!("warning: state file may be outdated\n\n");
         }
 
-        self.dtime = read_real(&mut f)?;
-        self.theta = read_real(&mut f)?;
+        self.dtime = read_real(f)?;
+        self.theta = read_real(f)?;
         let mut uq = [0u8; 1];
-        read_bytes(&mut f, &mut uq)?;
+        read_bytes(f, &mut uq)?;
         self.usequad = uq[0];
-        self.eps = read_real(&mut f)?;
-        self.options = read_string(&mut f)?;
-        self.tstop = read_real(&mut f)?;
-        self.dtout = read_real(&mut f)?;
-        self.tnow = read_real(&mut f)?;
-        self.tout = read_real(&mut f)?;
-        self.nstep = read_int(&mut f)?;
-        self.rsize = read_real(&mut f)?;
-        self.nbody = read_int(&mut f)?;
+        self.eps = read_real(f)?;
+        self.options = read_string(f)?;
+        self.tstop = read_real(f)?;
+        self.dtout = read_real(f)?;
+        self.tnow = read_real(f)?;
+        self.tout = read_real(f)?;
+        self.nstep = read_int(f)?;
+        self.rsize = read_real(f)?;
+        self.nbody = read_int(f)?;
         let nb = self.nbody as usize;
         self.bodytab = (0..nb).map(|_| Body::new()).collect();
         let slice = unsafe {

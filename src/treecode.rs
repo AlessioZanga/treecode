@@ -10,7 +10,7 @@ use std::os::raw::c_int;
 use crate::error::Result;
 use crate::error::TreeError;
 use crate::getparam;
-use crate::mathfns;
+use crate::rng;
 use crate::types::{Body, Cell, CellId, Matrix, NodeRef, Real, Vector, BODY, NDIM};
 
 pub const MAXLEVEL: usize = 32;
@@ -53,6 +53,9 @@ pub struct Tree {
     pub outfile: String,
     pub savefile: String,
     pub headline: String,
+
+    // parsed command-line parameters (was getparam `static mut` table)
+    pub config: getparam::Config,
 
     // diagnostics
     pub MTOT: Real,
@@ -112,6 +115,7 @@ impl Tree {
             outfile: String::new(),
             savefile: String::new(),
             headline: String::new(),
+            config: getparam::Config::new(),
             MTOT: 0.0,
             ETOT: [0.0; 3],
             KETEN: Matrix::zero(),
@@ -168,56 +172,53 @@ impl Tree {
     }
 
     unsafe fn startrun(&mut self) -> Result<()> {
-        let in_str = getparam::getparam("in")?;
-        let out_str = getparam::getparam("out")?;
-        let save_str = getparam::getparam("save")?;
+        let in_str = self.config.getparam("in")?;
+        let out_str = self.config.getparam("out")?;
+        let save_str = self.config.getparam("save")?;
 
         self.infile = in_str.clone();
         self.outfile = out_str.clone();
         self.savefile = save_str.clone();
 
-        let restore = getparam::getparam("restore")?;
+        let restore = self.config.getparam("restore")?;
 
         if restore.is_empty() {
-            self.eps = getparam::getdparam("eps")? as Real;
+            self.eps = self.config.getdparam("eps")? as Real;
 
-            let dtime_str = getparam::getparam("dtime")?;
+            let dtime_str = self.config.getparam("dtime")?;
             self.dtime = if let Some((n, d)) = dtime_str.split_once('/') {
                 let n: f64 = n.parse().unwrap_or(0.0);
                 let d: f64 = d.parse().unwrap_or(1.0);
                 (n / d) as Real
             } else {
-                getparam::getdparam("dtime")? as Real
+                self.config.getdparam("dtime")? as Real
             };
 
-            self.theta = getparam::getdparam("theta")? as Real;
-            self.usequad = getparam::getbparam("usequad")? as u8;
-            self.tstop = getparam::getdparam("tstop")? as Real;
+            self.theta = self.config.getdparam("theta")? as Real;
+            self.usequad = self.config.getbparam("usequad")? as u8;
+            self.tstop = self.config.getdparam("tstop")? as Real;
 
-            let dtout_str = getparam::getparam("dtout")?;
+            let dtout_str = self.config.getparam("dtout")?;
             self.dtout = if let Some((n, d)) = dtout_str.split_once('/') {
                 let n: f64 = n.parse().unwrap_or(0.0);
                 let d: f64 = d.parse().unwrap_or(1.0);
                 (n / d) as Real
             } else {
-                getparam::getdparam("dtout")? as Real
+                self.config.getdparam("dtout")? as Real
             };
 
-            self.options = getparam::getparam("options")?;
+            self.options = self.config.getparam("options")?;
 
             if !in_str.is_empty() {
                 self.inputdata()?;
             } else {
-                self.nbody = getparam::getiparam("nbody")?;
+                self.nbody = self.config.getiparam("nbody")?;
                 if self.nbody < 1 {
                     return Err(TreeError::AbsurdNbody(self.nbody));
                 }
-                let seed = getparam::getiparam("seed")?;
-                extern "C" {
-                    fn srandom(seed: u32);
-                }
-                srandom(seed as u32);
-                self.testdata()?;
+                let seed = self.config.getiparam("seed")?;
+                let mut rng = rng::RngState::new(seed as u32);
+                self.testdata(&mut rng)?;
                 self.tnow = 0.0;
             }
 
@@ -227,32 +228,32 @@ impl Tree {
         } else {
             self.restorestate(&restore)?;
 
-            if getparam::getparamstat("eps") & 0o4 != 0 {
-                self.eps = getparam::getdparam("eps")? as Real;
+            if self.config.getparamstat("eps") & 0o4 != 0 {
+                self.eps = self.config.getdparam("eps")? as Real;
             }
-            if getparam::getparamstat("theta") & 0o4 != 0 {
-                self.theta = getparam::getdparam("theta")? as Real;
+            if self.config.getparamstat("theta") & 0o4 != 0 {
+                self.theta = self.config.getdparam("theta")? as Real;
             }
-            if getparam::getparamstat("usequad") & 0o4 != 0 {
-                self.usequad = getparam::getbparam("usequad")? as u8;
+            if self.config.getparamstat("usequad") & 0o4 != 0 {
+                self.usequad = self.config.getbparam("usequad")? as u8;
             }
-            if getparam::getparamstat("options") & 0o4 != 0 {
-                self.options = getparam::getparam("options")?;
+            if self.config.getparamstat("options") & 0o4 != 0 {
+                self.options = self.config.getparam("options")?;
             }
-            if getparam::getparamstat("tstop") & 0o4 != 0 {
-                self.tstop = getparam::getdparam("tstop")? as Real;
+            if self.config.getparamstat("tstop") & 0o4 != 0 {
+                self.tstop = self.config.getdparam("tstop")? as Real;
             }
 
-            let dtout_str = getparam::getparam("dtout")?;
+            let dtout_str = self.config.getparam("dtout")?;
             self.dtout = if let Some((n, d)) = dtout_str.split_once('/') {
                 let n: f64 = n.parse().unwrap_or(0.0);
                 let d: f64 = d.parse().unwrap_or(1.0);
                 (n / d) as Real
             } else {
-                getparam::getdparam("dtout")? as Real
+                self.config.getdparam("dtout")? as Real
             };
 
-            let opts = getparam::getparam("options")?;
+            let opts = self.config.getparam("options")?;
             if crate::types::scanopt(&opts, "new-tout") {
                 self.tout = self.tnow + self.dtout;
             }
@@ -260,7 +261,7 @@ impl Tree {
         Ok(())
     }
 
-    unsafe fn testdata(&mut self) -> Result<()> {
+    unsafe fn testdata(&mut self, rng: &mut rng::RngState) -> Result<()> {
         let nb = self.nbody as usize;
 
         self.bodytab = (0..nb).map(|_| Body::new()).collect();
@@ -276,16 +277,16 @@ impl Tree {
             p.bodynode.node_type = BODY;
             p.bodynode.mass = (1.0 / nb as f64) as Real;
 
-            let x_f = mathfns::xrandom(0.0, 0.999) as f32;
+            let x_f = rng::xrandom(rng, 0.0, 0.999) as f32;
             let r = (1.0 / (x_f.powf(-2.0 / 3.0) - 1.0).sqrt() as f64) as f32;
 
-            mathfns::pickshell(&mut p.bodynode.pos, NDIM, rsc * r);
+            rng::pickshell(rng, &mut p.bodynode.pos, NDIM, rsc * r);
 
             let mut x: f32 = 0.0;
             let mut y: f32 = 0.0;
             loop {
-                x = mathfns::xrandom(0.0, 1.0) as f32;
-                y = mathfns::xrandom(0.0, 0.1) as f32;
+                x = rng::xrandom(rng, 0.0, 1.0) as f32;
+                y = rng::xrandom(rng, 0.0, 0.1) as f32;
                 let term = x * x * (1.0 - x * x).powf(3.5);
                 if y <= term {
                     break;
@@ -295,7 +296,7 @@ impl Tree {
             let a = (1.0 + r * r).sqrt();
             let b = (2.0 / a as f64) as f32;
             let v = x * b.sqrt();
-            mathfns::pickshell(&mut p.vel, NDIM, vsc * v);
+            rng::pickshell(rng, &mut p.vel, NDIM, vsc * v);
 
             for k in 0..NDIM {
                 rcm[k] = (rcm[k] as f64 + p.bodynode.pos[k] as f64 * (1.0 / nb as f64)) as f32;
@@ -336,9 +337,10 @@ pub fn run(argv: &[&str]) -> Result<Tree> {
         "VERSION=1.4",
     ];
 
-    getparam::initparam(argv, &defv)?;
+    let config = getparam::Config::initparam(argv, &defv)?;
 
     let mut tree = Tree::new();
+    tree.config = config;
     tree.headline = "Hierarchical N-body code (theta scan)".to_string();
     unsafe {
         tree.startrun()?;

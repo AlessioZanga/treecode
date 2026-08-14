@@ -1,6 +1,7 @@
 pub mod error;
 pub mod getparam;
 pub mod mathfns;
+pub mod rng;
 pub mod treecode;
 pub mod treegrav;
 pub mod treeio;
