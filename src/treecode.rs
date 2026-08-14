@@ -11,7 +11,7 @@ use crate::error::Result;
 use crate::error::TreeError;
 use crate::getparam;
 use crate::mathfns;
-use crate::types::{Body, Cell, Matrix, Node, Real, Vector, BODY, NDIM};
+use crate::types::{Body, Cell, CellId, Matrix, NodeRef, Real, Vector, BODY, NDIM};
 
 pub const MAXLEVEL: usize = 32;
 
@@ -22,9 +22,10 @@ pub const MAXLEVEL: usize = 32;
 #[derive(Debug)]
 #[allow(non_snake_case)]
 pub struct Tree {
-    // tree structure (raw pointers; replaced by an arena in Phase 4)
-    pub root: *mut Cell,
+    // tree structure (arena-backed; cells live in `cells`, bodies in `bodytab`)
+    pub root: Option<CellId>,
     pub bodytab: Vec<Body>,
+    pub cells: Vec<Cell>,
 
     // scalar state
     pub rsize: Real,
@@ -63,7 +64,7 @@ pub struct Tree {
     pub AMVEC: Vector,
 
     // treeload module state (was `static mut`)
-    pub freecell: *mut Node,
+    pub freecell: Vec<CellId>,
     pub firstcall: bool,
     pub bh86: bool,
     pub sw94: bool,
@@ -72,8 +73,8 @@ pub struct Tree {
 
     // treegrav module state (was `static mut`)
     pub actlen: c_int,
-    pub active: *mut *mut Node,
-    pub interact: *mut Cell,
+    pub active: Vec<NodeRef>,
+    pub interact: Vec<Cell>,
 }
 
 impl Default for Tree {
@@ -85,8 +86,9 @@ impl Default for Tree {
 impl Tree {
     pub fn new() -> Self {
         Tree {
-            root: std::ptr::null_mut(),
+            root: None,
             bodytab: Vec::new(),
+            cells: Vec::new(),
             rsize: 0.0,
             ncell: 0,
             tdepth: 0,
@@ -117,15 +119,15 @@ impl Tree {
             CMPOS: Vector::zero(),
             CMVEL: Vector::zero(),
             AMVEC: Vector::zero(),
-            freecell: std::ptr::null_mut(),
+            freecell: Vec::new(),
             firstcall: true,
             bh86: false,
             sw94: false,
             cellhist: [0; MAXLEVEL],
             subnhist: [0; MAXLEVEL],
             actlen: 0,
-            active: std::ptr::null_mut(),
-            interact: std::ptr::null_mut(),
+            active: Vec::new(),
+            interact: Vec::new(),
         }
     }
 

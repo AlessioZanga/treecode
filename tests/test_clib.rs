@@ -1,23 +1,30 @@
 use treecode::error::TreeError;
-use treecode::types::{allocate, cputime, eprintf, scanopt};
+use treecode::types::{cputime, eprintf, scanopt, Cell, Vector};
 
 #[test]
-fn test_allocate_non_null() {
-    let ptr = allocate(100).unwrap();
-    assert!(!ptr.is_null());
+fn test_arena_cells_default_zeroed() {
+    // The tree's cell arena is a `Vec<Cell>`; `makecell` relies on
+    // `Cell::default()` zeroing every field (what `allocate`'s calloc
+    // used to guarantee).
+    let arena: Vec<Cell> = vec![Cell::default(); 128];
+    assert!(arena.iter().all(|c| {
+        c.cellnode.mass == 0.0
+            && c.cellnode.pos == Vector::zero()
+            && c.rcrit2 == 0.0
+            && c.more.is_none()
+    }));
 }
 
 #[test]
-fn test_allocate_zeroed() {
-    let ptr = allocate(100).unwrap();
-    let slice = unsafe { std::slice::from_raw_parts(ptr, 100) };
-    assert!(slice.iter().all(|&b| b == 0));
-}
-
-#[test]
-fn test_allocate_small() {
-    let ptr = allocate(1).unwrap();
-    assert!(!ptr.is_null());
+fn test_arena_vec_growth() {
+    // Cells live in a growable `Vec` indexed by `CellId`.
+    let mut arena: Vec<Cell> = Vec::new();
+    arena.push(Cell::default());
+    let first = arena.len() - 1;
+    arena.push(Cell::default());
+    let second = arena.len() - 1;
+    assert_ne!(first, second);
+    assert_eq!(arena.len(), 2);
 }
 
 #[test]

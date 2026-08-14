@@ -2,16 +2,6 @@
 
 use std::os::raw::c_short;
 
-pub fn allocate(nb: usize) -> Result<*mut u8> {
-    unsafe {
-        let ptr = libc::calloc(nb as libc::size_t, 1) as *mut u8;
-        if ptr.is_null() {
-            return Err(TreeError::OutOfMemory(nb));
-        }
-        Ok(ptr)
-    }
-}
-
 pub fn cputime() -> Result<f64> {
     unsafe {
         let mut buffer: libc::tms = std::mem::zeroed();
@@ -40,6 +30,20 @@ pub const BODY: i16 = 0o1;
 pub const CELL: i16 = 0o2;
 pub const NSUB: usize = 1 << NDIM;
 
+/// Index of a body within [`Tree::bodytab`].
+pub type BodyId = usize;
+/// Index of a cell within the [`Tree`] cell arena.
+pub type CellId = usize;
+
+/// A reference to either a body or a cell, replacing the C `*mut Node`
+/// discriminant-and-pointer pair. Both variants carry a plain index, so the
+/// tree can be stored in growable vectors instead of a heap of raw pointers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeRef {
+    Body(BodyId),
+    Cell(CellId),
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Node {
@@ -47,7 +51,7 @@ pub struct Node {
     pub update: c_short,
     pub mass: Real,
     pub pos: Vector,
-    pub next: *mut Node,
+    pub next: Option<NodeRef>,
 }
 
 impl Node {
@@ -57,7 +61,7 @@ impl Node {
             update: 0,
             mass: 0.0,
             pos: Vector::zero(),
-            next: std::ptr::null_mut(),
+            next: None,
         }
     }
 }
@@ -82,32 +86,75 @@ impl Body {
     }
 }
 
-#[repr(C)]
-pub union Sorq {
-    pub subp: [*mut Node; NSUB],
-    pub quad: Matrix,
+/// Replacement for the C `union Sorq`. Cells either hold the `NSUB` subcell
+/// pointers (when quadrupole moments are not in use) or the quadrupole moment
+/// matrix. The default is the subcell form so freshly allocated cells behave
+/// like the original zeroed union.
+#[derive(Debug, Clone, Copy)]
+pub enum Sorq {
+    Subp([Option<NodeRef>; NSUB]),
+    Quad(Matrix),
 }
 
-impl Copy for Sorq {}
-impl Clone for Sorq {
-    fn clone(&self) -> Self {
-        *self
+impl Sorq {
+    pub fn subp(&self) -> &[Option<NodeRef>; NSUB] {
+        match self {
+            Sorq::Subp(s) => s,
+            Sorq::Quad(_) => panic!("Sorq::subp called on Quad variant"),
+        }
+    }
+
+    pub fn subp_mut(&mut self) -> &mut [Option<NodeRef>; NSUB] {
+        match self {
+            Sorq::Subp(s) => s,
+            Sorq::Quad(_) => panic!("Sorq::subp_mut called on Quad variant"),
+        }
+    }
+
+    pub fn quad(&self) -> Matrix {
+        match self {
+            Sorq::Quad(q) => *q,
+            Sorq::Subp(_) => Matrix::zero(),
+        }
+    }
+
+    pub fn quad_mut(&mut self) -> &mut Matrix {
+        match self {
+            Sorq::Quad(q) => q,
+            Sorq::Subp(_) => {
+                *self = Sorq::Quad(Matrix::zero());
+                match self {
+                    Sorq::Quad(q) => q,
+                    _ => unreachable!(),
+                }
+            }
+        }
     }
 }
 
-impl std::fmt::Debug for Sorq {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Sorq(...)")
+impl Default for Sorq {
+    fn default() -> Self {
+        Sorq::Subp([None; NSUB])
     }
 }
 
-#[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Cell {
     pub cellnode: Node,
     pub rcrit2: Real,
-    pub more: *mut Node,
+    pub more: Option<NodeRef>,
     pub sorq: Sorq,
+}
+
+impl Default for Cell {
+    fn default() -> Self {
+        Cell {
+            cellnode: Node::new(),
+            rcrit2: 0.0,
+            more: None,
+            sorq: Sorq::default(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -116,9 +163,8 @@ mod tests {
 
     #[test]
     fn sorq_debug_formats() {
-        let q: Sorq = Sorq {
-            quad: Matrix([[1.0; 3]; 3]),
-        };
-        assert_eq!(format!("{:?}", q), "Sorq(...)");
+        let q: Sorq = Sorq::Quad(Matrix([[1.0; 3]; 3]));
+        assert!(format!("{:?}", q)
+            .contains("Matrix([[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [1.0, 1.0, 1.0]])"));
     }
 }
