@@ -8,11 +8,6 @@
 //! working, and they implement the usual arithmetic operators. Every C
 //! macro also has a C-named method (`add`, `mul_scalar`, `dot`, ...).
 
-#![allow(clippy::needless_range_loop)]
-// The C-named methods `add`/`sub`/`mul` must stay 1:1 with vectmath.h even
-// though they match the operator trait method names (which are also impl'd).
-#![allow(clippy::should_implement_trait)]
-
 use std::ops::{
     Add, AddAssign, Deref, DerefMut, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign,
 };
@@ -356,16 +351,6 @@ impl Vector {
         v
     }
 
-    /// ADDV: element-wise sum.
-    pub fn add(self, w: Self) -> Self {
-        self + w
-    }
-
-    /// SUBV: element-wise difference.
-    pub fn sub(self, w: Self) -> Self {
-        self - w
-    }
-
     /// MULVS: multiply by a scalar.
     pub fn mul_scalar(self, s: Real) -> Self {
         self * s
@@ -448,21 +433,6 @@ impl Matrix {
             i += 1;
         }
         m
-    }
-
-    /// ADDM: element-wise sum.
-    pub fn add(self, r: Self) -> Self {
-        self + r
-    }
-
-    /// SUBM: element-wise difference.
-    pub fn sub(self, r: Self) -> Self {
-        self - r
-    }
-
-    /// MULM: matrix product.
-    pub fn mul(self, r: Self) -> Self {
-        self * r
     }
 
     /// TRANM: transpose.
@@ -591,8 +561,9 @@ pub fn add_mul_scalar2(v: &mut Vector, u: &Vector, s: Real, w: &Vector, r: Real)
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use approx::assert_relative_eq;
+
+    use super::*;
 
     #[test]
     fn layout_is_array_compatible() {
@@ -628,18 +599,12 @@ mod tests {
     fn method_forms_match_operators() {
         let u = Vector::from([1.0, 2.0, 3.0]);
         let w = Vector::from([4.0, 5.0, 6.0]);
-        assert_eq!(u.add(w), u + w);
-        assert_eq!(u.sub(w), u - w);
         assert_eq!(u.mul_scalar(2.0), u * 2.0);
         assert_eq!(u.div_scalar(2.0), u / 2.0);
         assert_eq!(u.dot(w), 32.0);
         assert_eq!(u.cross(w), Vector::from([-3.0, 6.0, -3.0]));
 
         let a = Matrix::from([[1.0, 2.0, 3.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
-        let b = Matrix::from([[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]]);
-        assert_eq!(a.add(b), a + b);
-        assert_eq!(a.sub(b), a - b);
-        assert_eq!(a.mul(b), a * b);
         assert_eq!(a.mul_scalar(2.0), a * 2.0);
         assert_eq!(a.mul_vec(w), a * w);
         assert_eq!(

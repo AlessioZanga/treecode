@@ -1,17 +1,8 @@
-#![allow(
-    clippy::needless_range_loop,
-    clippy::unnecessary_cast,
-    clippy::let_and_return,
-    unused_assignments
-)]
-
-use std::os::raw::c_int;
-
-use crate::error::Result;
-use crate::error::TreeError;
-use crate::getparam;
-use crate::rng;
-use crate::types::{Body, Cell, CellId, Matrix, Real, Vector, BODY, NDIM};
+use crate::{
+    error::{Result, TreeError},
+    getparam, rng,
+    types::{BODY, Body, Cell, CellId, Matrix, NDIM, Real, Vector},
+};
 
 pub const MAXLEVEL: usize = 32;
 
@@ -20,7 +11,6 @@ pub const MAXLEVEL: usize = 32;
 /// original C global names (including the uppercase diagnostics) so the
 /// mapping stays 1:1.
 #[derive(Debug)]
-#[allow(non_snake_case)]
 pub struct Tree {
     // tree structure (arena-backed; cells live in `cells`, bodies in `bodytab`)
     pub root: Option<CellId>,
@@ -29,23 +19,23 @@ pub struct Tree {
 
     // scalar state
     pub rsize: Real,
-    pub ncell: c_int,
-    pub tdepth: c_int,
+    pub ncell: i32,
+    pub tdepth: i32,
     pub cputree: Real,
     pub theta: Real,
     pub usequad: u8,
     pub eps: Real,
-    pub actmax: c_int,
-    pub nbbcalc: c_int,
-    pub nbccalc: c_int,
+    pub actmax: i32,
+    pub nbbcalc: i32,
+    pub nbccalc: i32,
     pub cpuforce: Real,
     pub dtime: Real,
     pub dtout: Real,
     pub tstop: Real,
     pub tnow: Real,
     pub tout: Real,
-    pub nstep: c_int,
-    pub nbody: c_int,
+    pub nstep: i32,
+    pub nbody: i32,
 
     // string state (was `*mut c_char`)
     pub options: String,
@@ -58,13 +48,13 @@ pub struct Tree {
     pub config: getparam::Config,
 
     // diagnostics
-    pub MTOT: Real,
-    pub ETOT: [Real; 3],
-    pub KETEN: Matrix,
-    pub PETEN: Matrix,
-    pub CMPOS: Vector,
-    pub CMVEL: Vector,
-    pub AMVEC: Vector,
+    pub mtot: Real,
+    pub etot: [Real; 3],
+    pub keten: Matrix,
+    pub peten: Matrix,
+    pub cmpos: Vector,
+    pub cmvel: Vector,
+    pub amvec: Vector,
 
     // treeload module state (was `static mut`)
     pub freecell: Vec<CellId>,
@@ -75,7 +65,7 @@ pub struct Tree {
     pub subnhist: [i32; MAXLEVEL],
 
     // treegrav module state (was `static mut`)
-    pub actlen: c_int,
+    pub actlen: i32,
 }
 
 impl Default for Tree {
@@ -114,13 +104,13 @@ impl Tree {
             savefile: String::new(),
             headline: String::new(),
             config: getparam::Config::new(),
-            MTOT: 0.0,
-            ETOT: [0.0; 3],
-            KETEN: Matrix::zero(),
-            PETEN: Matrix::zero(),
-            CMPOS: Vector::zero(),
-            CMVEL: Vector::zero(),
-            AMVEC: Vector::zero(),
+            mtot: 0.0,
+            etot: [0.0; 3],
+            keten: Matrix::zero(),
+            peten: Matrix::zero(),
+            cmpos: Vector::zero(),
+            cmvel: Vector::zero(),
+            amvec: Vector::zero(),
             freecell: Vec::new(),
             firstcall: true,
             bh86: false,
@@ -278,8 +268,8 @@ impl Tree {
 
             rng::pickshell(rng, &mut p.bodynode.pos, NDIM, rsc * r);
 
-            let mut x: f32 = 0.0;
-            let mut y: f32 = 0.0;
+            let mut x: f32;
+            let mut y: f32;
             loop {
                 x = rng::xrandom(rng, 0.0, 1.0) as f32;
                 y = rng::xrandom(rng, 0.0, 0.1) as f32;

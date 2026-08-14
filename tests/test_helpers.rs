@@ -1,9 +1,10 @@
-use std::io::Cursor;
-use std::os::unix::io::RawFd;
-use std::path::{Path, PathBuf};
+use std::{
+    io::Cursor,
+    os::unix::io::RawFd,
+    path::{Path, PathBuf},
+};
 
-use treecode::vecmath::{matrix_identity, matrix_zero, vector_length, vector_zero};
-use treecode::vecmath::{Matrix, Vector};
+use treecode::vecmath::{Matrix, Vector, matrix_identity, matrix_zero, vector_length, vector_zero};
 
 const STDOUT_FD: RawFd = 1;
 

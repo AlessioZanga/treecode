@@ -1,5 +1,6 @@
-use approx::assert_relative_eq;
 use std::process::Command;
+
+use approx::assert_relative_eq;
 use tempfile::TempDir;
 
 fn workspace_root() -> std::path::PathBuf {

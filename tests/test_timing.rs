@@ -1,6 +1,4 @@
-use std::env;
-use std::process::Command;
-use std::time::Instant;
+use std::{env, process::Command, time::Instant};
 
 fn workspace_root() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

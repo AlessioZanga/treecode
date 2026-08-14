@@ -1,5 +1,4 @@
-use std::path::PathBuf;
-use std::process::Command;
+use std::{path::PathBuf, process::Command};
 
 fn bin() -> PathBuf {
     let exe = std::env::current_exe().unwrap();

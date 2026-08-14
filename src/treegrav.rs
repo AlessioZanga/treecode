@@ -1,14 +1,10 @@
-#![allow(
-    clippy::needless_range_loop,
-    clippy::too_many_arguments,
-    clippy::many_single_char_names
-)]
-
-use crate::error::Result;
-use crate::error::TreeError;
-use crate::treecode::Tree;
-use crate::types::{cputime, Interact, Matrix, NodeRef, Real, Vector, BODY, CELL, NDIM, NSUB};
 use std::sync::Mutex;
+
+use crate::{
+    error::{Result, TreeError},
+    treecode::Tree,
+    types::{BODY, CELL, Interact, Matrix, NDIM, NSUB, NodeRef, Real, Vector, cputime},
+};
 
 const FACTIVE: Real = 0.75;
 
@@ -22,6 +18,25 @@ struct WalkCounters {
     nbccalc: i32,
 }
 
+/// Mutable, per-level state for the force walk, bundled into one object so every
+/// walk function takes a single context argument (keeps arity under the clippy
+/// `too_many_arguments` limit and the parallel fan-out closures short/flat).
+struct WalkCtx<'a> {
+    active: &'a mut Vec<NodeRef>,
+    interact: &'a mut Vec<Interact>,
+    aptr: usize,
+    nptr: usize,
+    cptr: usize,
+    bptr: usize,
+    np: usize,
+    p: NodeRef,
+    psize: Real,
+    pmid: Vector,
+    results: &'a Mutex<Vec<(Real, Vector)>>,
+    counters: &'a Mutex<WalkCounters>,
+    parallel: bool,
+}
+
 #[inline]
 fn next_midpoint(pmid: Vector, pos: Vector, poff: Real) -> Vector {
     let mut nmid = Vector::zero();
@@ -30,6 +45,15 @@ fn next_midpoint(pmid: Vector, pos: Vector, poff: Real) -> Vector {
         nmid[k] = pmid[k] + s;
     }
     nmid
+}
+
+#[inline]
+fn set_result(err_flag: &Mutex<Option<TreeError>>, r: Result<()>) {
+    if let Err(e) = r {
+        if let Ok(mut g) = err_flag.lock() {
+            *g = Some(e);
+        }
+    }
 }
 
 #[inline]
@@ -43,8 +67,7 @@ fn sumnode(
     acc0: &mut Vector,
 ) {
     let eps2 = eps * eps;
-    for idx in start..finish {
-        let c = &interact[idx];
+    for c in &interact[start..finish] {
         let (dr, mut dr2) = separation(c, pos0);
         dr2 += eps2;
         let drab = dr2.sqrt();
@@ -66,8 +89,7 @@ fn sumcell(
     acc0: &mut Vector,
 ) {
     let eps2 = eps * eps;
-    for idx in start..finish {
-        let c = &interact[idx];
+    for c in &interact[start..finish] {
         let (dr, mut dr2) = separation(c, pos0);
         dr2 += eps2;
         let drab = dr2.sqrt();
@@ -152,20 +174,22 @@ impl Tree {
         interact.resize(n, Interact::default());
         active[0] = NodeRef::Cell(root);
 
-        self.walktree(
-            &mut active,
-            &mut interact,
-            0,
-            1,
-            0,
-            n,
-            NodeRef::Cell(root),
-            self.rsize,
-            rmid,
-            &results,
-            &counters,
-            true,
-        )?;
+        let mut ctx = WalkCtx {
+            active: &mut active,
+            interact: &mut interact,
+            aptr: 0,
+            nptr: 1,
+            cptr: 0,
+            bptr: n,
+            np: 0,
+            p: NodeRef::Cell(root),
+            psize: self.rsize,
+            pmid: rmid,
+            results: &results,
+            counters: &counters,
+            parallel: true,
+        };
+        self.walktree(&mut ctx)?;
 
         self.cpuforce = (cputime()? - cpustart) as Real;
         let c = counters.into_inner().unwrap_or_default();
@@ -186,99 +210,96 @@ impl Tree {
         (base as Real * self.theta.powf(-2.5)) as i32
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn walktree(
+    #[inline]
+    fn walktree(&self, ctx: &mut WalkCtx) -> Result<()> {
+        let pnode = *self.node(ctx.p);
+        if pnode.update == 0 {
+            return Ok(());
+        }
+        let mut np = ctx.nptr;
+        let actsafe = self.actlen - NSUB as i32;
+        let mut cptr = ctx.cptr;
+        let mut bptr = ctx.bptr;
+        let mut ap = ctx.aptr;
+        while ap < ctx.nptr {
+            let apnode = ctx.active[ap];
+            let anode = *self.node(apnode);
+            if anode.node_type == CELL {
+                self.process_cell_node(ctx, apnode, actsafe, &mut np, &mut cptr)?;
+            } else if apnode != ctx.p {
+                self.process_body_node(ctx, apnode, &mut bptr);
+            }
+            ap += 1;
+        }
+        if let Ok(mut c) = ctx.counters.lock() {
+            if (np as i32) > c.actmax {
+                c.actmax = np as i32;
+            }
+        }
+        if np != ctx.nptr {
+            ctx.np = np;
+            ctx.cptr = cptr;
+            ctx.bptr = bptr;
+            self.walksub(ctx)?;
+        } else if pnode.node_type != BODY {
+            return Err(TreeError::RecursionTerminated);
+        } else {
+            self.gravsum(ctx.interact, ctx.p, cptr, bptr, ctx.results, ctx.counters);
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn process_cell_node(
         &self,
-        active: &mut Vec<NodeRef>,
-        interact: &mut Vec<Interact>,
-        aptr: usize,
-        nptr: usize,
-        cptr: usize,
-        bptr: usize,
-        p: NodeRef,
-        psize: Real,
-        pmid: Vector,
-        results: &Mutex<Vec<(Real, Vector)>>,
-        counters: &Mutex<WalkCounters>,
-        parallel: bool,
+        ctx: &mut WalkCtx,
+        apnode: NodeRef,
+        actsafe: i32,
+        np: &mut usize,
+        cptr: &mut usize,
     ) -> Result<()> {
-        let pnode = *self.node(p);
-        if pnode.update != 0 {
-            let mut np = nptr;
-            let actsafe = self.actlen - NSUB as i32;
-            let mut cptr = cptr;
-            let mut bptr = bptr;
-            let mut ap = aptr;
-            while ap < nptr {
-                let apnode = active[ap];
-                let anode = *self.node(apnode);
-                if anode.node_type == CELL {
-                    if self.accept(apnode, psize, pmid) {
-                        let cid = match apnode {
-                            NodeRef::Cell(c) => c,
-                            _ => unreachable!(),
-                        };
-                        let c = &self.cells[cid];
-                        let mass = c.cellnode.mass;
-                        let pos = c.cellnode.pos;
-                        let quad = if self.usequad != 0 {
-                            Some(c.sorq.quad())
-                        } else {
-                            None
-                        };
-                        interact[cptr].mass = mass;
-                        interact[cptr].pos = pos;
-                        interact[cptr].quad = quad;
-                        cptr += 1;
-                    } else {
-                        if np as i32 >= actsafe {
-                            return Err(TreeError::ActiveListOverflow);
-                        }
-                        let cid = match apnode {
-                            NodeRef::Cell(c) => c,
-                            _ => unreachable!(),
-                        };
-                        let pnext = anode.next;
-                        let mut q = self.cells[cid].more;
-                        while q != pnext {
-                            let qr = q.ok_or(TreeError::TreeStructure)?;
-                            active[np] = qr;
-                            np += 1;
-                            q = self.node(qr).next;
-                        }
-                    }
-                } else if apnode != p {
-                    bptr -= 1;
-                    let (mass, pos) = match apnode {
-                        NodeRef::Body(b) => {
-                            (self.bodytab[b].bodynode.mass, self.bodytab[b].bodynode.pos)
-                        }
-                        _ => unreachable!(),
-                    };
-                    interact[bptr].mass = mass;
-                    interact[bptr].pos = pos;
-                }
-                ap += 1;
-            }
-            let nact = np as i32;
-            if let Ok(mut c) = counters.lock() {
-                if nact > c.actmax {
-                    c.actmax = nact;
-                }
-            }
-            if np != nptr {
-                self.walksub(
-                    active, interact, nptr, np, cptr, bptr, p, psize, pmid, results, counters,
-                    parallel,
-                )?;
+        let cid = match apnode {
+            NodeRef::Cell(c) => c,
+            _ => unreachable!(),
+        };
+        if self.accept(apnode, ctx.psize, ctx.pmid) {
+            let c = &self.cells[cid];
+            let mass = c.cellnode.mass;
+            let pos = c.cellnode.pos;
+            let quad = if self.usequad != 0 {
+                Some(c.sorq.quad())
             } else {
-                if pnode.node_type != BODY {
-                    return Err(TreeError::RecursionTerminated);
-                }
-                self.gravsum(interact, p, cptr, bptr, results, counters);
+                None
+            };
+            ctx.interact[*cptr].mass = mass;
+            ctx.interact[*cptr].pos = pos;
+            ctx.interact[*cptr].quad = quad;
+            *cptr += 1;
+        } else {
+            if *np as i32 >= actsafe {
+                return Err(TreeError::ActiveListOverflow);
+            }
+            let pnext = self.node(apnode).next;
+            let mut q = self.cells[cid].more;
+            while q != pnext {
+                let qr = q.ok_or(TreeError::TreeStructure)?;
+                ctx.active[*np] = qr;
+                *np += 1;
+                q = self.node(qr).next;
             }
         }
         Ok(())
+    }
+
+    #[inline]
+    fn process_body_node(&self, ctx: &mut WalkCtx, apnode: NodeRef, bptr: &mut usize) {
+        *bptr -= 1;
+        let (mass, pos) = match apnode {
+            NodeRef::Body(b) => (self.bodytab[b].bodynode.mass, self.bodytab[b].bodynode.pos),
+            _ => unreachable!(),
+        };
+        ctx.interact[*bptr].mass = mass;
+        ctx.interact[*bptr].pos = pos;
     }
 
     #[inline]
@@ -301,126 +322,115 @@ impl Tree {
         dsq > rcrit2 && dmax > 1.5 * psize
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn walksub(
-        &self,
-        active: &mut Vec<NodeRef>,
-        interact: &mut Vec<Interact>,
-        nptr: usize,
-        np: usize,
-        cptr: usize,
-        bptr: usize,
-        p: NodeRef,
-        psize: Real,
-        pmid: Vector,
-        results: &Mutex<Vec<(Real, Vector)>>,
-        counters: &Mutex<WalkCounters>,
-        parallel: bool,
-    ) -> Result<()> {
-        let poff = psize / 4.0;
-        let pnode = *self.node(p);
-        if let NodeRef::Cell(pid) = p {
+    fn walksub(&self, ctx: &mut WalkCtx) -> Result<()> {
+        let poff = ctx.psize / 4.0;
+        let pnode = *self.node(ctx.p);
+        if let NodeRef::Cell(pid) = ctx.p {
             let pnext = pnode.next;
             let mut q = self.cells[pid].more;
-            // Collect children first so the active/interact scratch can be moved
-            // into each parallel task without borrow conflicts.
             let mut children = Vec::with_capacity(NSUB);
             while q != pnext {
                 let qr = q.ok_or(TreeError::TreeStructure)?;
                 children.push(qr);
                 q = self.node(qr).next;
             }
-            if parallel {
-                let actlen = self.actlen as usize;
-                let err_flag = Mutex::new(None::<TreeError>);
-                std::thread::scope(|s| {
-                    for qr in children {
-                        let nmid = next_midpoint(pmid, self.node(qr).pos, poff);
-                        let mut active2 = Vec::new();
-                        if active2.try_reserve(actlen).is_err() {
-                            if let Ok(mut g) = err_flag.lock() {
-                                *g = Some(TreeError::OutOfMemory(actlen));
-                            }
-                            continue;
-                        }
-                        active2.resize(actlen, NodeRef::Body(0));
-                        active2[0..(np - nptr)].copy_from_slice(&active[nptr..np]);
-                        let mut interact2 = Vec::new();
-                        if interact2.try_reserve(actlen).is_err() {
-                            if let Ok(mut g) = err_flag.lock() {
-                                *g = Some(TreeError::OutOfMemory(actlen));
-                            }
-                            continue;
-                        }
-                        interact2.resize(actlen, Interact::default());
-                        interact2[0..cptr].copy_from_slice(&interact[0..cptr]);
-                        interact2[bptr..actlen].copy_from_slice(&interact[bptr..actlen]);
-                        let err_flag = &err_flag;
-                        s.spawn(move || {
-                            let r = self.walktree(
-                                &mut active2,
-                                &mut interact2,
-                                0,
-                                np - nptr,
-                                cptr,
-                                bptr,
-                                qr,
-                                psize / 2.0,
-                                nmid,
-                                results,
-                                counters,
-                                false,
-                            );
-                            if let Err(e) = r {
-                                if let Ok(mut g) = err_flag.lock() {
-                                    *g = Some(e);
-                                }
-                            }
-                        });
-                    }
-                });
-                if let Some(e) = err_flag.into_inner().unwrap_or_default() {
-                    return Err(e);
-                }
-                Ok(())
+            if ctx.parallel {
+                self.fan_out_parallel(&children, ctx)?;
             } else {
-                for qr in children {
-                    let nmid = next_midpoint(pmid, self.node(qr).pos, poff);
-                    self.walktree(
-                        active,
-                        interact,
-                        nptr,
-                        np,
-                        cptr,
-                        bptr,
-                        qr,
-                        psize / 2.0,
-                        nmid,
-                        results,
-                        counters,
-                        false,
-                    )?;
-                }
-                Ok(())
+                self.walk_sequential(&children, ctx)?;
             }
         } else {
-            let nmid = next_midpoint(pmid, pnode.pos, poff);
-            self.walktree(
-                active,
-                interact,
-                nptr,
-                np,
-                cptr,
-                bptr,
-                p,
-                psize / 2.0,
-                nmid,
-                results,
-                counters,
-                false,
-            )?;
-            Ok(())
+            let nmid = next_midpoint(ctx.pmid, pnode.pos, poff);
+            ctx.aptr = ctx.nptr;
+            ctx.nptr = ctx.np;
+            ctx.psize /= 2.0;
+            ctx.pmid = nmid;
+            ctx.parallel = false;
+            self.walktree(ctx)?;
         }
+        Ok(())
+    }
+
+    #[inline]
+    fn walk_sequential(&self, children: &[NodeRef], ctx: &mut WalkCtx) -> Result<()> {
+        let poff = ctx.psize / 4.0;
+        for qr in children {
+            let nmid = next_midpoint(ctx.pmid, self.node(*qr).pos, poff);
+            let mut child = WalkCtx {
+                active: &mut *ctx.active,
+                interact: &mut *ctx.interact,
+                aptr: ctx.nptr,
+                nptr: ctx.np,
+                cptr: ctx.cptr,
+                bptr: ctx.bptr,
+                np: ctx.np,
+                p: *qr,
+                psize: ctx.psize / 2.0,
+                pmid: nmid,
+                results: ctx.results,
+                counters: ctx.counters,
+                parallel: false,
+            };
+            self.walktree(&mut child)?;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn fan_out_parallel(&self, children: &[NodeRef], ctx: &WalkCtx) -> Result<()> {
+        self.walk_parallel(children, ctx)
+    }
+
+    #[inline]
+    fn walk_parallel(&self, children: &[NodeRef], ctx: &WalkCtx) -> Result<()> {
+        let err_flag = Mutex::new(None::<TreeError>);
+        std::thread::scope(|s| {
+            for qr in children {
+                s.spawn(|| self.run_child_walk(*qr, ctx, &err_flag));
+            }
+        });
+        if let Some(e) = err_flag.into_inner().unwrap_or_default() {
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn run_child_walk(&self, qr: NodeRef, ctx: &WalkCtx, err_flag: &Mutex<Option<TreeError>>) {
+        let actlen = self.actlen as usize;
+        let poff = ctx.psize / 4.0;
+        let nmid = next_midpoint(ctx.pmid, self.node(qr).pos, poff);
+        let mut active2 = Vec::new();
+        if active2.try_reserve(actlen).is_err() {
+            set_result(err_flag, Err(TreeError::OutOfMemory(actlen)));
+            return;
+        }
+        active2.resize(actlen, NodeRef::Body(0));
+        active2[0..(ctx.np - ctx.nptr)].copy_from_slice(&ctx.active[ctx.nptr..ctx.np]);
+        let mut interact2 = Vec::new();
+        if interact2.try_reserve(actlen).is_err() {
+            set_result(err_flag, Err(TreeError::OutOfMemory(actlen)));
+            return;
+        }
+        interact2.resize(actlen, Interact::default());
+        interact2[0..ctx.cptr].copy_from_slice(&ctx.interact[0..ctx.cptr]);
+        interact2[ctx.bptr..actlen].copy_from_slice(&ctx.interact[ctx.bptr..actlen]);
+        let mut child = WalkCtx {
+            active: &mut active2,
+            interact: &mut interact2,
+            aptr: 0,
+            nptr: ctx.np - ctx.nptr,
+            cptr: ctx.cptr,
+            bptr: ctx.bptr,
+            np: ctx.np - ctx.nptr,
+            p: qr,
+            psize: ctx.psize / 2.0,
+            pmid: nmid,
+            results: ctx.results,
+            counters: ctx.counters,
+            parallel: false,
+        };
+        set_result(err_flag, self.walktree(&mut child));
     }
 
     fn gravsum(

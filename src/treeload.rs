@@ -1,18 +1,10 @@
-#![allow(
-    clippy::needless_range_loop,
-    clippy::manual_memcpy,
-    clippy::too_many_arguments,
-    clippy::many_single_char_names
-)]
-
-use crate::error::Result;
-use crate::error::TreeError;
-use crate::mathfns;
-use crate::treecode::{Tree, MAXLEVEL};
-use crate::types::{
-    cputime, BodyId, Cell, CellId, Node, NodeRef, Real, Sorq, Vector, CELL, NDIM, NSUB,
+use crate::{
+    error::{Result, TreeError},
+    mathfns,
+    treecode::{MAXLEVEL, Tree},
+    types::{BodyId, CELL, Cell, CellId, NDIM, NSUB, Node, NodeRef, Real, Sorq, Vector, cputime},
+    vecmath::{Matrix, matrix_zero, vector_zero},
 };
-use crate::vecmath::{matrix_zero, vector_zero, Matrix};
 
 fn set_center_of_mass(p: &Cell, cmpos: &mut Vector) {
     if p.cellnode.mass > 0.0 {
@@ -270,9 +262,8 @@ impl Tree {
     ) -> Result<()> {
         let mut tmpv: Vector = Vector::zero();
         let subp = *self.cells[p].sorq.subp();
-        for i in 0..NSUB {
-            let sub = subp[i];
-            if let Some(q) = sub {
+        for sub in &subp {
+            if let Some(q) = *sub {
                 self.subnhist[lev as usize] += 1;
                 if let NodeRef::Cell(cid) = q {
                     self.hackcofm(cid, psize / 2.0, lev + 1)?;
@@ -325,11 +316,9 @@ impl Tree {
     fn collect_descendants(&self, c: CellId, desc: &mut [Option<NodeRef>]) -> usize {
         let mut ndesc: usize = 0;
         let subp = self.cells[c].sorq.subp();
-        for i in 0..NSUB {
-            if let Some(s) = subp[i] {
-                desc[ndesc] = Some(s);
-                ndesc += 1;
-            }
+        for s in subp.iter().flatten() {
+            desc[ndesc] = Some(*s);
+            ndesc += 1;
         }
         ndesc
     }
@@ -357,8 +346,8 @@ impl Tree {
         let mut desc: [Option<NodeRef>; NSUB] = [None; NSUB];
         let ndesc = self.collect_descendants(p, &mut desc);
         matrix_zero(self.cells[p].sorq.quad_mut());
-        for i in 0..ndesc {
-            let q = desc[i].ok_or(TreeError::TreeStructure)?;
+        for d in &desc[..ndesc] {
+            let q = d.ok_or(TreeError::TreeStructure)?;
             if let NodeRef::Cell(cid) = q {
                 self.hackquad(cid)?;
             }

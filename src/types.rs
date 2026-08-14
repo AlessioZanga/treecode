@@ -1,7 +1,3 @@
-#![allow(clippy::new_without_default)]
-
-use std::os::raw::c_short;
-
 pub fn cputime() -> Result<f64> {
     // Safe, dependency-free replacement for the C `times()` call. The process
     // CPU-time counters (utime + stime, in clock ticks) are read from
@@ -43,9 +39,10 @@ pub fn scanopt(opt: &str, key: &str) -> bool {
     false
 }
 
-pub use crate::error::eprintf;
-pub use crate::error::{error, Result, TreeError};
-pub use crate::vecmath::{Matrix, Real, Vector, NDIM};
+pub use crate::{
+    error::{Result, TreeError, eprintf, error},
+    vecmath::{Matrix, NDIM, Real, Vector},
+};
 
 pub const BODY: i16 = 0o1;
 pub const CELL: i16 = 0o2;
@@ -69,14 +66,14 @@ pub enum NodeRef {
 #[derive(Debug, Clone, Copy)]
 pub struct Node {
     pub node_type: i16,
-    pub update: c_short,
+    pub update: i16,
     pub mass: Real,
     pub pos: Vector,
     pub next: Option<NodeRef>,
 }
 
-impl Node {
-    pub fn new() -> Self {
+impl Default for Node {
+    fn default() -> Self {
         Node {
             node_type: 0,
             update: 0,
@@ -84,6 +81,12 @@ impl Node {
             pos: Vector::zero(),
             next: None,
         }
+    }
+}
+
+impl Node {
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
@@ -96,14 +99,20 @@ pub struct Body {
     pub phi: Real,
 }
 
-impl Body {
-    pub fn new() -> Self {
+impl Default for Body {
+    fn default() -> Self {
         Body {
-            bodynode: Node::new(),
+            bodynode: Node::default(),
             vel: Vector::zero(),
             acc: Vector::zero(),
             phi: 0.0,
         }
+    }
+}
+
+impl Body {
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
@@ -202,7 +211,9 @@ mod tests {
     #[test]
     fn sorq_debug_formats() {
         let q: Sorq = Sorq::Quad(Matrix([[1.0; 3]; 3]));
-        assert!(format!("{:?}", q)
-            .contains("Matrix([[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [1.0, 1.0, 1.0]])"));
+        assert!(
+            format!("{:?}", q)
+                .contains("Matrix([[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [1.0, 1.0, 1.0]])")
+        );
     }
 }

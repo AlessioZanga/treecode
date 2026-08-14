@@ -1,13 +1,12 @@
-#![allow(clippy::needless_range_loop, clippy::manual_memcpy)]
-
 use std::io::{BufReader, BufWriter, Read, Write};
 
-use crate::error::Result;
-use crate::error::TreeError;
-use crate::getparam;
-use crate::treecode::Tree;
-use crate::types::{Body, Real, Vector, BODY, NDIM};
-use crate::vecmath::{matrix_zero, vector_zero};
+use crate::{
+    error::{Result, TreeError},
+    getparam,
+    treecode::Tree,
+    types::{BODY, Body, NDIM, Real, Vector},
+    vecmath::{matrix_zero, vector_zero},
+};
 
 const E_WIDTH: usize = 14;
 
@@ -200,12 +199,12 @@ impl Tree {
 
         let mut cmabs: Real = 0.0;
         for k in 0..NDIM {
-            cmabs += self.CMVEL[k] * self.CMVEL[k];
+            cmabs += self.cmvel[k] * self.cmvel[k];
         }
         cmabs = cmabs.sqrt();
         let mut amabs: Real = 0.0;
         for k in 0..NDIM {
-            amabs += self.AMVEC[k] * self.AMVEC[k];
+            amabs += self.amvec[k] * self.amvec[k];
         }
         amabs = amabs.sqrt();
 
@@ -216,10 +215,10 @@ impl Tree {
         println!(
             "    {:8.3}{:8.5}{:8.5}{:8.5}{:8.5}{:8.5}{:8.5}{:8.3}",
             self.tnow,
-            self.ETOT[0].abs(),
-            self.ETOT[1],
-            -self.ETOT[2],
-            -self.ETOT[1] / self.ETOT[2],
+            self.etot[0].abs(),
+            self.etot[1],
+            -self.etot[2],
+            -self.etot[1] / self.etot[2],
             cmabs,
             amabs,
             crate::types::cputime()?
@@ -286,52 +285,52 @@ impl Tree {
     }
 
     fn diagnostics(&mut self) {
-        self.MTOT = 0.0;
-        self.ETOT[1] = 0.0;
-        self.ETOT[2] = 0.0;
-        matrix_zero(&mut self.KETEN);
-        matrix_zero(&mut self.PETEN);
-        vector_zero(&mut self.AMVEC);
-        vector_zero(&mut self.CMPOS);
-        vector_zero(&mut self.CMVEL);
+        self.mtot = 0.0;
+        self.etot[1] = 0.0;
+        self.etot[2] = 0.0;
+        matrix_zero(&mut self.keten);
+        matrix_zero(&mut self.peten);
+        vector_zero(&mut self.amvec);
+        vector_zero(&mut self.cmpos);
+        vector_zero(&mut self.cmvel);
 
         let nb = self.nbody as usize;
         for j in 0..nb {
             let p = self.bodytab[j];
             let m = p.bodynode.mass;
-            self.MTOT += m;
+            self.mtot += m;
 
             let mut velsq: Real = 0.0;
             for k in 0..NDIM {
                 velsq += p.vel[k] * p.vel[k];
             }
-            self.ETOT[1] += 0.5 * m * velsq;
-            self.ETOT[2] += 0.5 * m * p.phi;
+            self.etot[1] += 0.5 * m * velsq;
+            self.etot[2] += 0.5 * m * p.phi;
 
             for i in 0..NDIM {
                 for k in 0..NDIM {
-                    self.KETEN[i][k] += (0.5 * m * p.vel[i]) * p.vel[k];
-                    self.PETEN[i][k] += (m * p.bodynode.pos[i]) * p.acc[k];
+                    self.keten[i][k] += (0.5 * m * p.vel[i]) * p.vel[k];
+                    self.peten[i][k] += (m * p.bodynode.pos[i]) * p.acc[k];
                 }
             }
 
             for i in 0..NDIM {
                 let ii = (i + 1) % NDIM;
                 let jj = (i + 2) % NDIM;
-                self.AMVEC[i] +=
+                self.amvec[i] +=
                     m * (p.vel[ii] * p.bodynode.pos[jj] - p.vel[jj] * p.bodynode.pos[ii]);
             }
 
             for k in 0..NDIM {
-                self.CMPOS[k] += m * p.bodynode.pos[k];
-                self.CMVEL[k] += m * p.vel[k];
+                self.cmpos[k] += m * p.bodynode.pos[k];
+                self.cmvel[k] += m * p.vel[k];
             }
         }
 
-        self.ETOT[0] = self.ETOT[1] + self.ETOT[2];
+        self.etot[0] = self.etot[1] + self.etot[2];
         for k in 0..NDIM {
-            self.CMPOS[k] /= self.MTOT;
-            self.CMVEL[k] /= self.MTOT;
+            self.cmpos[k] /= self.mtot;
+            self.cmvel[k] /= self.mtot;
         }
     }
 

@@ -1,6 +1,8 @@
-use std::os::unix::io::RawFd;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::{
+    os::unix::io::RawFd,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 const STDOUT_FD: RawFd = 1;
 

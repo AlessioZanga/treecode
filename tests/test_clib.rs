@@ -1,5 +1,7 @@
-use treecode::error::TreeError;
-use treecode::types::{cputime, eprintf, scanopt, Cell, Vector};
+use treecode::{
+    error::TreeError,
+    types::{Cell, Vector, cputime, eprintf, scanopt},
+};
 
 #[test]
 fn test_arena_cells_default_zeroed() {

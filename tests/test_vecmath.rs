@@ -1,5 +1,5 @@
 use approx::assert_relative_eq;
-use treecode::vecmath::{Matrix, Vector, NDIM};
+use treecode::vecmath::{Matrix, NDIM, Vector};
 
 /// Deterministic LCG so the property sweeps are reproducible.
 fn lcg(state: &mut u64) -> f32 {

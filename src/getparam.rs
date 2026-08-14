@@ -1,5 +1,4 @@
-use crate::error::Result;
-use crate::error::TreeError;
+use crate::error::{Result, TreeError};
 
 const DEFPARAM: i32 = 0o1;
 const REQPARAM: i32 = 0o2;

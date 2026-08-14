@@ -1,5 +1,4 @@
-use std::os::unix::io::RawFd;
-use std::path::Path;
+use std::{os::unix::io::RawFd, path::Path};
 
 const STDOUT_FD: RawFd = 1;
 

@@ -1,8 +1,7 @@
 #![forbid(clippy::unwrap_used)]
 #![forbid(clippy::expect_used)]
 
-use std::env;
-use std::process::exit;
+use std::{env, process::exit};
 
 fn main() {
     let params: Vec<String> = env::args().skip(1).collect();

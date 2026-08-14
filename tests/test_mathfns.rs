@@ -1,7 +1,8 @@
 use approx::assert_relative_eq;
-use treecode::mathfns;
-use treecode::rng;
-use treecode::types::{scanopt, Vector};
+use treecode::{
+    mathfns, rng,
+    types::{Vector, scanopt},
+};
 
 #[test]
 fn test_rsqr() {

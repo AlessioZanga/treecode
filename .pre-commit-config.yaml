@@ -8,17 +8,29 @@ repos:
       - id: check-merge-conflict
       - id: mixed-line-ending
 
-  - repo: https://github.com/doublify/pre-commit-rust
-    rev: v1.0
-    hooks:
-      - id: fmt
-      - id: clippy
-        args: [--all-targets, --fix, --allow-dirty, --allow-staged, --, -D, warnings]
-      - id: clippy
-        args: [--all-targets, --, -D, warnings]
-
   - repo: local
     hooks:
+      - id: fmt
+        name: fmt
+        entry: cargo +nightly fmt
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: clippy-fix
+        name: clippy (fix)
+        entry: cargo clippy --all-targets --fix --allow-dirty --allow-staged -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: clippy
+        name: clippy
+        entry: cargo clippy --all-targets -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+
       - id: cargo-test
         name: cargo test
         entry: cargo test -- --test-threads=1

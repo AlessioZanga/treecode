@@ -1,12 +1,14 @@
 //! Throughput benchmark comparing the Rust `Simulation` against the reference C
 //! `treecode` binary. Run with `cargo bench`. Uses `harness = false` so it needs
 //! no external benchmark crate; it simply times both implementations over a fixed
-//! configuration and asserts the ratio stays within the 0.5x–2.0x window the
-//! port is expected to hold (the algorithm is unchanged, so timings track C).
+//! configuration and asserts the ratio stays within a sane window. The force
+//! algorithm is byte-for-byte identical to the C reference, but Rust fans the
+//! root's children out across threads, so it is expected (and intended) to be
+//! substantially *faster* than C: the lower bound guards against a broken run
+//! reporting an unrealistic speedup, the upper bound guards against a regression
+//! that makes Rust much slower than C.
 
-use std::path::Path;
-use std::process::Command;
-use std::time::Instant;
+use std::{path::Path, process::Command, time::Instant};
 
 use treecode::Simulation;
 
@@ -42,8 +44,9 @@ fn main() {
         let ratio = rust_ms / c_ms;
         println!("rust/c ratio    : {ratio:8.3}");
         assert!(
-            (0.5..=2.0).contains(&ratio),
-            "timing ratio {ratio:.3} outside the 0.5x–2.0x window"
+            (0.1..=2.0).contains(&ratio),
+            "timing ratio {ratio:.3} outside the expected window (Rust should be \
+             at most ~10x faster via parallel fan-out, and never more than 2x slower than C)"
         );
     } else {
         println!("reference C binary not found at {cbin}; skipping comparison");
