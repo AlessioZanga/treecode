@@ -229,16 +229,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn getparam_after_init() {
-        let cfg = Config::initparam(&["prog", "x=5"], &["x=0"]).unwrap();
-        assert_eq!(cfg.getparam("x").unwrap(), "5");
+    fn getparam_after_init() -> Result<()> {
+        let cfg = Config::initparam(&["prog", "x=5"], &["x=0"])?;
+        assert_eq!(cfg.getparam("x")?, "5");
         assert_eq!(cfg.getparamstat("x") & ARGPARAM, ARGPARAM);
+        Ok(())
     }
 
     #[test]
-    fn getparam_argv0() {
-        let cfg = Config::initparam(&["hello"], &[]).unwrap();
-        assert_eq!(cfg.getparam("argv0").unwrap(), "hello");
+    fn getparam_argv0() -> Result<()> {
+        let cfg = Config::initparam(&["hello"], &[])?;
+        assert_eq!(cfg.getparam("argv0")?, "hello");
+        Ok(())
     }
 
     #[test]

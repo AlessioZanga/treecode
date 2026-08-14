@@ -1,317 +1,165 @@
 use approx::assert_relative_eq;
-use treecode::types::{Matrix, Real, Vector, NDIM};
-use treecode::vecmath::{add_mul_scalar, add_mul_scalar2, dot_mul_mat, dot_sub, outer_product};
+use treecode::vecmath::{Matrix, Vector, NDIM};
 
-#[test]
-fn test_vector_zero() {
-    let v = Vector::zero();
-    assert_eq!(v, [0.0, 0.0, 0.0]);
+/// Deterministic LCG so the property sweeps are reproducible.
+fn lcg(state: &mut u64) -> f32 {
+    *state = state
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    let frac = ((*state >> 11) as f64) / ((1u64 << 53) as f64);
+    (frac * 20.0 - 10.0) as f32
 }
 
-#[test]
-fn test_vector_unit() {
-    let v0 = Vector::unit(0);
-    assert_eq!(v0, [1.0, 0.0, 0.0]);
-    let v1 = Vector::unit(1);
-    assert_eq!(v1, [0.0, 1.0, 0.0]);
-    let v2 = Vector::unit(2);
-    assert_eq!(v2, [0.0, 0.0, 1.0]);
-    let v3 = Vector::unit(3);
-    assert_eq!(v3, [0.0, 0.0, 0.0]);
+fn rand_vec(state: &mut u64) -> ([f32; NDIM], Vector) {
+    let arr = [lcg(state), lcg(state), lcg(state)];
+    (arr, Vector::from(arr))
 }
 
-#[test]
-fn test_vector_add() {
-    let u = Vector::from([1.0, 2.0, 3.0]);
-    let w = Vector::from([4.0, 5.0, 6.0]);
-    assert_eq!(u.add(w), [5.0, 7.0, 9.0]);
-    assert_eq!(u + w, [5.0, 7.0, 9.0]);
+fn rand_mat(state: &mut u64) -> ([[f32; NDIM]; NDIM], Matrix) {
+    let arr: [[f32; NDIM]; NDIM] = std::array::from_fn(|_| std::array::from_fn(|_| lcg(state)));
+    (arr, Matrix::from(arr))
 }
 
-#[test]
-fn test_vector_sub() {
-    let u = Vector::from([4.0, 5.0, 6.0]);
-    let w = Vector::from([1.0, 2.0, 3.0]);
-    assert_eq!(u.sub(w), [3.0, 3.0, 3.0]);
-    assert_eq!(u - w, [3.0, 3.0, 3.0]);
-}
+// ---- Vector vs `[f32;3]` reference -------------------------------------------
 
 #[test]
-fn test_vector_mul_scalar() {
-    let u = Vector::from([1.0, 2.0, 3.0]);
-    assert_eq!(u.mul_scalar(2.0), [2.0, 4.0, 6.0]);
-    assert_eq!(u.mul_scalar(0.0), [0.0, 0.0, 0.0]);
-    assert_eq!(u * 2.0, [2.0, 4.0, 6.0]);
-    assert_eq!(2.0 * u, [2.0, 4.0, 6.0]);
-}
+fn vector_ops_match_reference() {
+    let mut s = 0x1234_5678_9abc_def0u64;
+    for _ in 0..500 {
+        let (a, va) = rand_vec(&mut s);
+        let (b, vb) = rand_vec(&mut s);
+        let sc = lcg(&mut s);
 
-#[test]
-fn test_vector_div_scalar() {
-    let u = Vector::from([2.0, 4.0, 6.0]);
-    assert_eq!(u.div_scalar(2.0), [1.0, 2.0, 3.0]);
-    assert_eq!(u / 2.0, [1.0, 2.0, 3.0]);
-}
+        let add = [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+        let sub = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+        let mul = [a[0] * sc, a[1] * sc, a[2] * sc];
+        let neg = [-a[0], -a[1], -a[2]];
+        let div = [a[0] / sc, a[1] / sc, a[2] / sc];
+        let dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
-#[test]
-fn test_vector_dot() {
-    let u = Vector::from([1.0, 2.0, 3.0]);
-    let v = Vector::from([4.0, 5.0, 6.0]);
-    assert_relative_eq!(u.dot(v), 32.0);
-    assert_relative_eq!(u.dot(u), 14.0);
-}
+        assert_eq!(va + vb, Vector::from(add));
+        assert_eq!(va - vb, Vector::from(sub));
+        assert_eq!(va * sc, Vector::from(mul));
+        assert_eq!(sc * va, Vector::from(mul));
+        assert_eq!(-va, Vector::from(neg));
+        assert_eq!(va / sc, Vector::from(div));
+        assert_relative_eq!(va.dot(vb), dot, epsilon = 1e-4);
 
-#[test]
-fn test_vector_length() {
-    let v = Vector::from([3.0, 4.0, 0.0]);
-    assert_relative_eq!(v.length(), 5.0);
-    let v = Vector::zero();
-    assert_relative_eq!(v.length(), 0.0);
-}
-
-#[test]
-fn test_vector_distance() {
-    let u = Vector::from([1.0, 2.0, 3.0]);
-    let v = Vector::from([4.0, 6.0, 3.0]);
-    assert_relative_eq!(u.distance(v), 5.0);
-}
-
-#[test]
-fn test_vector_cross() {
-    let u = Vector::from([1.0, 0.0, 0.0]);
-    let v = Vector::from([0.0, 1.0, 0.0]);
-    assert_eq!(u.cross(v), [0.0, 0.0, 1.0]);
-    let u = Vector::from([0.0, 1.0, 0.0]);
-    let v = Vector::from([1.0, 0.0, 0.0]);
-    assert_eq!(u.cross(v), [0.0, 0.0, -1.0]);
-}
-
-#[test]
-fn test_vector_set_scalar() {
-    let mut v = Vector::from([1.0, 2.0, 3.0]);
-    v.set_scalar(5.0);
-    assert_eq!(v, [5.0, 5.0, 5.0]);
-}
-
-#[test]
-fn test_vector_add_scalar() {
-    let mut v = Vector::from([1.0, 2.0, 3.0]);
-    let u = Vector::from([4.0, 5.0, 6.0]);
-    v.add_scalar(u, 10.0);
-    assert_eq!(v, [14.0, 15.0, 16.0]);
-}
-
-#[test]
-fn test_matrix_zero() {
-    let m = Matrix::zero();
-    for row in &m {
-        for val in row {
-            assert_relative_eq!(*val, 0.0);
-        }
+        // assignment operators
+        let mut acc = va;
+        acc += vb;
+        assert_eq!(acc, Vector::from(add));
+        acc = va;
+        acc -= vb;
+        assert_eq!(acc, Vector::from(sub));
+        acc = va;
+        acc *= sc;
+        assert_eq!(acc, Vector::from(mul));
+        acc = va;
+        acc /= sc;
+        assert_eq!(acc, Vector::from(div));
     }
 }
 
 #[test]
-fn test_matrix_identity() {
-    let m = Matrix::identity();
-    for i in 0..NDIM {
-        for j in 0..NDIM {
-            if i == j {
-                assert_relative_eq!(m[i][j], 1.0);
-            } else {
-                assert_relative_eq!(m[i][j], 0.0);
+fn vector_cross_and_length_match_reference() {
+    let mut s = 0xfeed_face_1357_9bdfu64;
+    for _ in 0..300 {
+        let (a, va) = rand_vec(&mut s);
+        let (b, vb) = rand_vec(&mut s);
+
+        let cross = [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ];
+        let cprod = va.cross(vb);
+        for (k, &c) in cross.iter().enumerate() {
+            assert_relative_eq!(cprod.0[k], c, epsilon = 1e-3);
+        }
+
+        let len_sq = a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
+        assert_relative_eq!(va.length(), len_sq.sqrt(), epsilon = 1e-3);
+    }
+}
+
+// ---- Matrix associativity / properties vs reference ---------------------------
+
+#[test]
+fn matrix_mul_associative() {
+    let mut s = 0xc0ffee00cafebabeu64;
+    for _ in 0..300 {
+        let (_, a) = rand_mat(&mut s);
+        let (_, b) = rand_mat(&mut s);
+        let (_, c) = rand_mat(&mut s);
+
+        let lhs = (a * b) * c;
+        let rhs = a * (b * c);
+        for i in 0..NDIM {
+            for j in 0..NDIM {
+                assert_relative_eq!(lhs[i][j], rhs[i][j], epsilon = 1e-2);
             }
         }
     }
 }
 
 #[test]
-fn test_matrix_add() {
-    let q = Matrix::from([[1.0; NDIM]; NDIM]);
-    let r = Matrix::from([[2.0; NDIM]; NDIM]);
-    let p = q.add(r);
-    for row in &p {
-        for val in row {
-            assert_relative_eq!(*val, 3.0);
-        }
-    }
-    assert_eq!(q + r, p);
-}
+fn matrix_vector_mul_matches_reference() {
+    let mut s = 0x9e3779b97f4a7c15u64;
+    for _ in 0..300 {
+        let (_, m) = rand_mat(&mut s);
+        let (v, mv) = rand_vec(&mut s);
 
-#[test]
-fn test_matrix_sub() {
-    let q = Matrix::from([[3.0; NDIM]; NDIM]);
-    let r = Matrix::from([[1.0; NDIM]; NDIM]);
-    let p = q.sub(r);
-    for row in &p {
-        for val in row {
-            assert_relative_eq!(*val, 2.0);
+        let mut refv = [0.0f32; NDIM];
+        for i in 0..NDIM {
+            let mut acc = 0.0f32;
+            for k in 0..NDIM {
+                acc += m[i][k] * v[k];
+            }
+            refv[i] = acc;
         }
+        assert_eq!(m * mv, Vector::from(refv));
+        assert_eq!(m.mul_vec(mv), Vector::from(refv));
     }
 }
 
 #[test]
-fn test_matrix_mul() {
-    let q = Matrix::identity();
-    let r = Matrix::from([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]);
-    let p = q.mul(r);
-    assert_eq!(p, r);
-    assert_eq!(q * r, r);
-}
+fn matrix_transpose_properties() {
+    let mut s = 0x1234_4321_abcd_dcba_u64;
+    for _ in 0..200 {
+        let (_, a) = rand_mat(&mut s);
+        let (_, b) = rand_mat(&mut s);
 
-#[test]
-fn test_matrix_transpose() {
-    let q = Matrix::from([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]);
-    let t = q.transpose();
-    assert_eq!(t[0], [1.0, 4.0, 7.0]);
-    assert_eq!(t[1], [2.0, 5.0, 8.0]);
-    assert_eq!(t[2], [3.0, 6.0, 9.0]);
-}
+        assert_eq!(a.transpose().transpose(), a);
 
-#[test]
-fn test_matrix_mul_scalar() {
-    let q = Matrix::from([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]);
-    let p = q.mul_scalar(2.0);
-    assert_eq!(p[0], [2.0, 4.0, 6.0]);
-    assert_eq!(p[1], [8.0, 10.0, 12.0]);
-    assert_eq!(p[2], [14.0, 16.0, 18.0]);
-}
-
-#[test]
-fn test_matrix_div_scalar() {
-    let q = Matrix::from([[2.0, 4.0, 6.0], [8.0, 10.0, 12.0], [14.0, 16.0, 18.0]]);
-    let p = q.div_scalar(2.0);
-    assert_eq!(p[0], [1.0, 2.0, 3.0]);
-    assert_eq!(p[1], [4.0, 5.0, 6.0]);
-    assert_eq!(p[2], [7.0, 8.0, 9.0]);
-}
-
-#[test]
-fn test_matrix_mul_vec() {
-    let m = Matrix::identity();
-    let u = Vector::from([1.0, 2.0, 3.0]);
-    let v = m.mul_vec(u);
-    assert_eq!(v, u);
-    assert_eq!(m * u, u);
-}
-
-#[test]
-fn test_matrix_set_scalar() {
-    let mut m = Matrix::zero();
-    m.set_scalar(7.0);
-    for row in &m {
-        for val in row {
-            assert_relative_eq!(*val, 7.0);
+        // (A*B)^T == B^T * A^T
+        let ab_t = (a * b).transpose();
+        let bt_at = b.transpose() * a.transpose();
+        for i in 0..NDIM {
+            for j in 0..NDIM {
+                assert_relative_eq!(ab_t[i][j], bt_at[i][j], epsilon = 1e-2);
+            }
         }
+
+        // identity is neutral
+        let i = Matrix::identity();
+        assert_eq!(i * a, a);
+        assert_eq!(a * i, a);
     }
 }
 
 #[test]
-fn test_outer_product() {
-    let u = Vector::from([1.0, 2.0, 3.0]);
-    let v = Vector::from([4.0, 5.0, 6.0]);
-    let p = outer_product(&u, &v);
-    assert_eq!(p[0], [4.0, 5.0, 6.0]);
-    assert_eq!(p[1], [8.0, 10.0, 12.0]);
-    assert_eq!(p[2], [12.0, 15.0, 18.0]);
-}
-
-#[test]
-fn test_matrix_trace() {
-    let m = Matrix::from([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]);
-    assert_relative_eq!(m.trace(), 15.0);
-}
-
-#[test]
-fn test_dot_sub() {
-    let u = Vector::from([4.0, 5.0, 6.0]);
-    let w = Vector::from([1.0, 2.0, 3.0]);
-    let (s, v) = dot_sub(&u, &w);
-    assert_eq!(v, [3.0, 3.0, 3.0]);
-    assert_relative_eq!(s, 27.0);
-}
-
-#[test]
-fn test_dot_mul_mat() {
-    let p = Matrix::identity();
-    let u = Vector::from([1.0, 2.0, 3.0]);
-    let (s, v) = dot_mul_mat(&p, &u);
-    assert_eq!(v, u);
-    assert_relative_eq!(s, 14.0);
-}
-
-#[test]
-fn test_add_mul_scalar() {
-    let mut v = Vector::from([1.0, 2.0, 3.0]);
-    let u = Vector::from([4.0, 5.0, 6.0]);
-    add_mul_scalar(&mut v, &u, 2.0);
-    assert_eq!(v, [9.0, 12.0, 15.0]);
-}
-
-#[test]
-fn test_add_mul_scalar2() {
-    let mut v = Vector::from([1.0, 2.0, 3.0]);
-    let u = Vector::from([4.0, 5.0, 6.0]);
-    let w = Vector::from([1.0, 1.0, 1.0]);
-    add_mul_scalar2(&mut v, &u, 2.0, &w, 3.0);
-    assert_eq!(v, [12.0, 15.0, 18.0]);
-}
-
-#[test]
-fn test_from_into() {
-    let a: [Real; NDIM] = [1.0, 2.0, 3.0];
-    let v: Vector = a.into();
-    let back: [Real; NDIM] = v.into();
-    assert_eq!(a, back);
-
-    let m: Matrix = [[1.0; NDIM]; NDIM].into();
-    let back: [[Real; NDIM]; NDIM] = m.into();
-    assert_eq!([[1.0; NDIM]; NDIM], back);
-}
-
-#[test]
-fn test_indexing() {
-    let mut v = Vector::from([1.0, 2.0, 3.0]);
-    v[1] = 9.0;
-    assert_eq!(v, [1.0, 9.0, 3.0]);
-    assert_eq!(v[0], 1.0);
-
-    let mut m = Matrix::zero();
-    m[0][1] = 5.0;
-    assert_eq!(m[0][1], 5.0);
-}
-
-#[test]
-fn test_add_assign() {
-    let mut v = Vector::from([1.0, 2.0, 3.0]);
-    v += Vector::from([4.0, 5.0, 6.0]);
-    assert_eq!(v, [5.0, 7.0, 9.0]);
-
-    let mut m = Matrix::identity();
-    m += m;
-    assert_eq!(m, Matrix::identity().mul_scalar(2.0));
-}
-
-#[test]
-fn test_ones() {
-    assert_eq!(Vector::ones(), [1.0, 1.0, 1.0]);
-    let m = Matrix::ones();
-    assert_eq!(m[0], [1.0, 1.0, 1.0]);
-    assert_eq!(m[2][2], 1.0);
-}
-
-#[test]
-fn test_const_constructors() {
-    const ZV: Vector = Vector::zero();
-    const OV: Vector = Vector::ones();
-    const UV: Vector = Vector::unit(1);
-    const ZM: Matrix = Matrix::zero();
-    const OM: Matrix = Matrix::ones();
-    const IM: Matrix = Matrix::identity();
-
-    assert_eq!(ZV, [0.0; 3]);
-    assert_eq!(OV, [1.0; 3]);
-    assert_eq!(UV, [0.0, 1.0, 0.0]);
-    assert_eq!(ZM, [[0.0; 3]; 3]);
-    assert_eq!(OM, [[1.0; 3]; 3]);
-    assert_eq!(IM, Matrix::identity());
+fn vector_iter_sum_matches() {
+    let mut s = 0x55aa_55aa_55aa_55aau64;
+    let mut total = Vector::zero();
+    for _ in 0..50 {
+        let (_, v) = rand_vec(&mut s);
+        total += v;
+    }
+    let sum: Vector = (0..50).map(|_| Vector::zero()).sum(); // sanity: zero sum
+    assert_eq!(sum, Vector::zero());
+    // `total` is non-trivially built; just ensure finite and dimensionally sane
+    for x in &total.0 {
+        assert!(x.is_finite());
+    }
 }

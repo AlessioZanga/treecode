@@ -11,12 +11,12 @@ use crate::vecmath::{matrix_zero, vector_zero};
 
 const E_WIDTH: usize = 14;
 
-fn getargv0(config: &getparam::Config) -> String {
-    config.getparam("argv0").unwrap()
+fn getargv0(config: &getparam::Config) -> Result<String> {
+    config.getparam("argv0")
 }
 
-fn getversion(config: &getparam::Config) -> String {
-    config.getparam("VERSION").unwrap()
+fn getversion(config: &getparam::Config) -> Result<String> {
+    config.getparam("VERSION")
 }
 
 fn fmt_e14(v: Real) -> String {
@@ -129,28 +129,21 @@ impl Tree {
         self.nbody = nb;
         self.bodytab = (0..nb as usize).map(|_| Body::new()).collect();
 
-        unsafe {
-            let btab = self.bodytab.as_mut_ptr();
-            for j in 0..nb as usize {
-                let p = &mut *btab.add(j);
-                p.bodynode.mass = parse_f64(&toks, &mut i)? as Real;
+        for body in &mut self.bodytab {
+            body.bodynode.mass = parse_f64(&toks, &mut i)? as Real;
+        }
+        for body in &mut self.bodytab {
+            for p in &mut body.bodynode.pos.0 {
+                *p = parse_f64(&toks, &mut i)? as Real;
             }
-            for j in 0..nb as usize {
-                let p = &mut *btab.add(j);
-                for k in 0..NDIM {
-                    p.bodynode.pos[k] = parse_f64(&toks, &mut i)? as Real;
-                }
+        }
+        for body in &mut self.bodytab {
+            for p in &mut body.vel.0 {
+                *p = parse_f64(&toks, &mut i)? as Real;
             }
-            for j in 0..nb as usize {
-                let p = &mut *btab.add(j);
-                for k in 0..NDIM {
-                    p.vel[k] = parse_f64(&toks, &mut i)? as Real;
-                }
-            }
-            for j in 0..nb as usize {
-                let p = &mut *btab.add(j);
-                p.bodynode.node_type = BODY;
-            }
+        }
+        for body in &mut self.bodytab {
+            body.bodynode.node_type = BODY;
         }
 
         let opts = self.options.clone();
@@ -359,8 +352,8 @@ impl Tree {
     /// `save=` file and passes a `BufWriter`, while tests can capture into a
     /// `Vec<u8>`.
     pub fn savestate_to(&self, f: &mut impl Write) -> Result<()> {
-        write_string(f, &getargv0(&self.config))?;
-        write_string(f, &getversion(&self.config))?;
+        write_string(f, &getargv0(&self.config)?)?;
+        write_string(f, &getversion(&self.config)?)?;
         write_real(f, self.dtime)?;
         write_real(f, self.theta)?;
         write_bytes(f, &[self.usequad])?;
@@ -378,14 +371,22 @@ impl Tree {
     }
 
     fn write_bodytab(&self, f: &mut impl Write) -> Result<()> {
-        let nb = self.nbody as usize;
-        let slice = unsafe {
-            std::slice::from_raw_parts(
-                self.bodytab.as_ptr() as *const u8,
-                nb * std::mem::size_of::<Body>(),
-            )
-        };
-        write_bytes(f, slice)
+        for b in &self.bodytab {
+            write_int(f, b.bodynode.node_type as i32)?;
+            write_int(f, b.bodynode.update as i32)?;
+            write_real(f, b.bodynode.mass)?;
+            for &p in &b.bodynode.pos.0 {
+                write_real(f, p)?;
+            }
+            for &p in &b.vel.0 {
+                write_real(f, p)?;
+            }
+            for &p in &b.acc.0 {
+                write_real(f, p)?;
+            }
+            write_real(f, b.phi)?;
+        }
+        Ok(())
     }
 
     pub fn restorestate(&mut self, file: &str) -> Result<()> {
@@ -401,8 +402,12 @@ impl Tree {
     pub fn restorestate_from(&mut self, f: &mut impl Read) -> Result<()> {
         let program = read_string(f)?;
         let version = read_string(f)?;
-        if program != getargv0(&self.config) || version != getversion(&self.config) {
-            println!("warning: state file may be outdated\n\n");
+        // The saved program/version are compared only as a best-effort warning;
+        // a freshly built tree (e.g. `Tree::new()`) may not carry those params.
+        if let (Ok(argv0), Ok(ver)) = (getargv0(&self.config), getversion(&self.config)) {
+            if program != argv0 || version != ver {
+                println!("warning: state file may be outdated\n\n");
+            }
         }
 
         self.dtime = read_real(f)?;
@@ -421,13 +426,21 @@ impl Tree {
         self.nbody = read_int(f)?;
         let nb = self.nbody as usize;
         self.bodytab = (0..nb).map(|_| Body::new()).collect();
-        let slice = unsafe {
-            std::slice::from_raw_parts_mut(
-                self.bodytab.as_mut_ptr() as *mut u8,
-                nb * std::mem::size_of::<Body>(),
-            )
-        };
-        f.read_exact(slice).map_err(|_| TreeError::ReadFailed)?;
+        for b in &mut self.bodytab {
+            b.bodynode.node_type = read_int(f)? as i16;
+            b.bodynode.update = read_int(f)? as i16;
+            b.bodynode.mass = read_real(f)?;
+            for p in &mut b.bodynode.pos.0 {
+                *p = read_real(f)?;
+            }
+            for p in &mut b.vel.0 {
+                *p = read_real(f)?;
+            }
+            for p in &mut b.acc.0 {
+                *p = read_real(f)?;
+            }
+            b.phi = read_real(f)?;
+        }
         Ok(())
     }
 }

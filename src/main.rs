@@ -1,14 +1,21 @@
+#![forbid(clippy::unwrap_used)]
+#![forbid(clippy::expect_used)]
+
 use std::env;
+use std::process::exit;
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    let arg_strs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    if let Err(e) = treecode::treecode::run(&arg_strs) {
+    let params: Vec<String> = env::args().skip(1).collect();
+    let result = match treecode::Simulation::new(params) {
+        Ok(mut sim) => sim.run(),
+        Err(e) => Err(e),
+    };
+    if let Err(e) = result {
         match e {
-            treecode::error::TreeError::Help => std::process::exit(0),
+            treecode::error::TreeError::Help => exit(0),
             _ => {
                 eprintln!("{}", e);
-                std::process::exit(1);
+                exit(1);
             }
         }
     }
@@ -17,9 +24,10 @@ fn main() {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn binary_entry_runs_simulation() {
+    fn binary_entry_runs_simulation() -> Result<(), treecode::error::TreeError> {
         let args = ["treecode", "nbody=30", "tstop=0.01", "dtout=0.005"];
-        let tree = treecode::treecode::run(&args).unwrap();
+        let tree = treecode::treecode::run(&args)?;
         assert!(tree.nstep > 0, "simulation should advance steps");
+        Ok(())
     }
 }

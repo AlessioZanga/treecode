@@ -4,10 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-libc = "0.2"
 thiserror = "2"
 
 [dev-dependencies]
 assert_cmd = "2.0"
 approx = "0.5"
 tempfile = "3.0"
+libc = "0.2"
+
+[[bench]]
+name = "throughput"
+harness = false

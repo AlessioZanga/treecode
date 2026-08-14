@@ -125,7 +125,7 @@ impl Tree {
         self.actmax = 0;
         self.nbbcalc = 0;
         self.nbccalc = 0;
-        let root = self.root.unwrap();
+        let root = self.root.ok_or(TreeError::TreeStructure)?;
         active[0] = NodeRef::Cell(root);
         self.active = active;
         self.interact = interact;
@@ -196,7 +196,7 @@ impl Tree {
                         let pnext = self.node(apnode).next;
                         let mut q = self.cells[cid].more;
                         while q != pnext {
-                            let qr = q.unwrap();
+                            let qr = q.ok_or(TreeError::TreeStructure)?;
                             self.active[np] = qr;
                             np += 1;
                             q = self.node(qr).next;
@@ -270,7 +270,7 @@ impl Tree {
             let pnext = self.node(p).next;
             let mut q = self.cells[pid].more;
             while q != pnext {
-                let qr = q.unwrap();
+                let qr = q.ok_or(TreeError::TreeStructure)?;
                 let nmid = next_midpoint(pmid, self.node(qr).pos, poff);
                 self.walktree(nptr, np, cptr, bptr, qr, psize / 2.0, nmid)?;
                 q = self.node(qr).next;

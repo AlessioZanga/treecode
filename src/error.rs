@@ -3,6 +3,7 @@ use std::io::Write;
 pub type Result<T> = std::result::Result<T, TreeError>;
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum TreeError {
     #[error("absurd value for nbody: {0}")]
     AbsurdNbody(i32),

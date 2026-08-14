@@ -592,6 +592,7 @@ pub fn add_mul_scalar2(v: &mut Vector, u: &Vector, s: Real, w: &Vector, r: Real)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use approx::assert_relative_eq;
 
     #[test]
     fn layout_is_array_compatible() {
@@ -621,5 +622,92 @@ mod tests {
         assert_eq!(m * u, u);
         assert_eq!(m + m, m * 2.0);
         assert_eq!(m.trace(), 3.0);
+    }
+
+    #[test]
+    fn method_forms_match_operators() {
+        let u = Vector::from([1.0, 2.0, 3.0]);
+        let w = Vector::from([4.0, 5.0, 6.0]);
+        assert_eq!(u.add(w), u + w);
+        assert_eq!(u.sub(w), u - w);
+        assert_eq!(u.mul_scalar(2.0), u * 2.0);
+        assert_eq!(u.div_scalar(2.0), u / 2.0);
+        assert_eq!(u.dot(w), 32.0);
+        assert_eq!(u.cross(w), Vector::from([-3.0, 6.0, -3.0]));
+
+        let a = Matrix::from([[1.0, 2.0, 3.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+        let b = Matrix::from([[2.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 2.0]]);
+        assert_eq!(a.add(b), a + b);
+        assert_eq!(a.sub(b), a - b);
+        assert_eq!(a.mul(b), a * b);
+        assert_eq!(a.mul_scalar(2.0), a * 2.0);
+        assert_eq!(a.mul_vec(w), a * w);
+        assert_eq!(
+            a.transpose(),
+            Matrix::from([[1.0, 0.0, 0.0], [2.0, 1.0, 0.0], [3.0, 0.0, 1.0]])
+        );
+    }
+
+    #[test]
+    fn exercises_remaining_api() {
+        // Vector extras
+        assert_eq!(Vector::ones(), Vector::from([1.0, 1.0, 1.0]));
+        assert_eq!(Vector::unit(0), Vector::from([1.0, 0.0, 0.0]));
+        assert_eq!(Vector::unit(5), Vector::zero()); // out of range -> zero
+        let mut v = Vector::zero();
+        v.set_scalar(2.0);
+        assert_eq!(v, Vector::from([2.0, 2.0, 2.0]));
+        let mut w = Vector::zero();
+        w.add_scalar(Vector::from([1.0, 2.0, 3.0]), 5.0);
+        assert_eq!(w, Vector::from([6.0, 7.0, 8.0]));
+        assert_eq!(Vector::from([3.0, 0.0, 4.0]).length(), 5.0);
+        assert_eq!(
+            Vector::from([3.0, 0.0, 0.0]).distance(Vector::from([0.0, 0.0, 0.0])),
+            3.0
+        );
+
+        // Matrix extras
+        let mut m = Matrix::zero();
+        m.set_scalar(2.0);
+        assert_eq!(m, Matrix::from([[2.0; 3]; 3]));
+        assert_eq!(m.div_scalar(2.0), Matrix::from([[1.0; 3]; 3]));
+        assert_eq!(m.mul_scalar(0.5).trace(), 3.0);
+        let ident = Matrix::identity();
+        assert_eq!(ident.transpose(), ident);
+
+        // Free functions
+        let mut zv = Vector::from([1.0, 2.0, 3.0]);
+        vector_zero(&mut zv);
+        assert_eq!(zv, Vector::zero());
+        assert_eq!(vector_length(&Vector::from([0.0, 3.0, 4.0])), 5.0);
+
+        let mut zm = Matrix::identity();
+        matrix_zero(&mut zm);
+        assert_eq!(zm, Matrix::zero());
+        let mut im = Matrix::zero();
+        matrix_identity(&mut im);
+        assert_eq!(im, Matrix::identity());
+
+        let a = Vector::from([1.0, 2.0, 3.0]);
+        let b = Vector::from([4.0, 5.0, 6.0]);
+        let op = outer_product(&a, &b);
+        assert_eq!(
+            op,
+            Matrix::from([[4.0, 5.0, 6.0], [8.0, 10.0, 12.0], [12.0, 15.0, 18.0],])
+        );
+
+        let (s, dv) = dot_sub(&a, &b);
+        assert_eq!(dv, a - b);
+        assert_relative_eq!(s, (a - b).dot(a - b), epsilon = 1e-3);
+
+        let (s2, mv) = dot_mul_mat(&ident, &a);
+        assert_eq!(mv, a);
+        assert_relative_eq!(s2, a.dot(a), epsilon = 1e-3);
+
+        let mut acc = Vector::zero();
+        add_mul_scalar(&mut acc, &a, 2.0);
+        assert_eq!(acc, a * 2.0);
+        add_mul_scalar2(&mut acc, &b, 1.0, &a, 1.0);
+        assert_eq!(acc, a * 3.0 + b);
     }
 }

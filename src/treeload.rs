@@ -91,14 +91,14 @@ impl Tree {
         let root = self.makecell()?;
         self.root = Some(root);
         vector_zero(&mut self.cells[root].cellnode.pos);
-        self.expandbox(nbody);
+        self.expandbox(nbody)?;
         self.load_all_bodies(nbody)?;
         self.parse_options()?;
         self.reset_stats();
         self.hackcofm(root, self.rsize, 0)?;
-        self.threadtree(NodeRef::Cell(root), None);
+        self.threadtree(NodeRef::Cell(root), None)?;
         if self.usequad != 0 {
-            self.hackquad(root);
+            self.hackquad(root)?;
         }
         self.cputree = (cputime()? - cpustart) as Real;
         Ok(())
@@ -165,8 +165,8 @@ impl Tree {
         Ok(id)
     }
 
-    fn expandbox(&mut self, nbody: i32) {
-        let root = self.root.unwrap();
+    fn expandbox(&mut self, nbody: i32) -> Result<()> {
+        let root = self.root.ok_or(TreeError::TreeStructure)?;
         let mut dmax: Real = 0.0;
         for i in 0..nbody as usize {
             let p = &self.bodytab[i];
@@ -180,10 +180,11 @@ impl Tree {
         while self.rsize < 2.0 * dmax {
             self.rsize *= 2.0;
         }
+        Ok(())
     }
 
     fn loadbody(&mut self, p: BodyId) -> Result<()> {
-        let mut q: CellId = self.root.unwrap();
+        let mut q: CellId = self.root.ok_or(TreeError::TreeStructure)?;
         let mut qind = self.subindex(p, q);
         let mut qsize = self.rsize;
         while self.cells[q].sorq.subp()[qind].is_some() {
@@ -196,9 +197,10 @@ impl Tree {
                 self.cells[c].sorq.subp_mut()[sub] = Some(NodeRef::Body(other));
                 self.cells[q].sorq.subp_mut()[qind] = Some(NodeRef::Cell(c));
             }
-            q = match self.cells[q].sorq.subp()[qind].unwrap() {
-                NodeRef::Cell(c) => c,
-                _ => unreachable!(),
+            let next = self.cells[q].sorq.subp()[qind];
+            q = match next {
+                Some(NodeRef::Cell(c)) => c,
+                _ => return Err(TreeError::TreeStructure),
             };
             qind = self.subindex(p, q);
             qsize /= 2.0;
@@ -330,7 +332,7 @@ impl Tree {
         ndesc
     }
 
-    fn threadtree(&mut self, p: NodeRef, n: Option<NodeRef>) {
+    fn threadtree(&mut self, p: NodeRef, n: Option<NodeRef>) -> Result<()> {
         self.node_mut(p).next = n;
         if self.node(p).node_type == CELL {
             let cid = match p {
@@ -342,22 +344,25 @@ impl Tree {
             self.cells[cid].more = desc[0];
             desc[ndesc] = n;
             for i in 0..ndesc {
-                self.threadtree(desc[i].unwrap(), desc[i + 1]);
+                let child = desc[i].ok_or(TreeError::TreeStructure)?;
+                self.threadtree(child, desc[i + 1])?;
             }
         }
+        Ok(())
     }
 
-    fn hackquad(&mut self, p: CellId) {
+    fn hackquad(&mut self, p: CellId) -> Result<()> {
         let mut desc: [Option<NodeRef>; NSUB] = [None; NSUB];
         let ndesc = self.collect_descendants(p, &mut desc);
         matrix_zero(self.cells[p].sorq.quad_mut());
         for i in 0..ndesc {
-            let q = desc[i].unwrap();
+            let q = desc[i].ok_or(TreeError::TreeStructure)?;
             if let NodeRef::Cell(cid) = q {
-                self.hackquad(cid);
+                self.hackquad(cid)?;
             }
             self.accumulate_moment(p, q);
         }
+        Ok(())
     }
 
     fn accumulate_moment(&mut self, p: CellId, q: NodeRef) {

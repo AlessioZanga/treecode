@@ -119,3 +119,18 @@ fn vector_matrix_helpers() {
     assert_eq!(i[1][0], 0.0);
     assert_eq!(i[2][2], 1.0);
 }
+
+#[test]
+fn simulation_api_new_and_run() {
+    let mut sim = treecode::Simulation::new(["nbody=30", "tstop=0.01", "dtout=0.005"]).unwrap();
+    sim.run().unwrap();
+    assert!(sim.state().nstep > 0, "simulation should advance steps");
+}
+
+#[test]
+fn simulation_api_step_and_output() {
+    let mut sim = treecode::Simulation::new(["nbody=20", "tstop=0.02", "dtout=0.01"]).unwrap();
+    sim.step().unwrap();
+    sim.output().unwrap();
+    assert!(sim.state().nstep > 0);
+}

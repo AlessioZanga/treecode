@@ -3,14 +3,30 @@
 use std::os::raw::c_short;
 
 pub fn cputime() -> Result<f64> {
-    unsafe {
-        let mut buffer: libc::tms = std::mem::zeroed();
-        if libc::times(&mut buffer) == -1 {
-            return Err(TreeError::CpuTimeFailed);
-        }
-        let hz = libc::sysconf(libc::_SC_CLK_TCK) as f64;
-        Ok((buffer.tms_utime + buffer.tms_stime) as f64 / (60.0 * hz))
-    }
+    // Safe, dependency-free replacement for the C `times()` call. The process
+    // CPU-time counters (utime + stime, in clock ticks) are read from
+    // `/proc/self/stat`; on Linux the tick rate is the fixed USER_HZ == 100,
+    // the same value `sysconf(_SC_CLK_TCK)` returns, so the result is identical
+    // to the original `libc::times` implementation and the diagnostics stay
+    // byte-exact. This keeps the crate 100% safe (`#![forbid(unsafe_code)]`)
+    // while preserving C-compatible output.
+    let stat = std::fs::read_to_string("/proc/self/stat").map_err(|_| TreeError::CpuTimeFailed)?;
+    // Field 2 (`comm`) may contain spaces/parens; split after the final ')'.
+    let after_comm = stat
+        .rsplit_once(')')
+        .map(|(_, rest)| rest)
+        .ok_or(TreeError::CpuTimeFailed)?;
+    let fields: Vec<&str> = after_comm.split_whitespace().collect();
+    let utime: f64 = fields
+        .get(11)
+        .and_then(|s| s.parse().ok())
+        .ok_or(TreeError::CpuTimeFailed)?;
+    let stime: f64 = fields
+        .get(12)
+        .and_then(|s| s.parse().ok())
+        .ok_or(TreeError::CpuTimeFailed)?;
+    const CLK_TCK: f64 = 100.0; // Linux USER_HZ == sysconf(_SC_CLK_TCK)
+    Ok((utime + stime) / (60.0 * CLK_TCK))
 }
 
 pub fn scanopt(opt: &str, key: &str) -> bool {
