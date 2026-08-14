@@ -11,7 +11,7 @@ use crate::error::Result;
 use crate::error::TreeError;
 use crate::getparam;
 use crate::rng;
-use crate::types::{Body, Cell, CellId, Matrix, NodeRef, Real, Vector, BODY, NDIM};
+use crate::types::{Body, Cell, CellId, Matrix, Real, Vector, BODY, NDIM};
 
 pub const MAXLEVEL: usize = 32;
 
@@ -76,8 +76,6 @@ pub struct Tree {
 
     // treegrav module state (was `static mut`)
     pub actlen: c_int,
-    pub active: Vec<NodeRef>,
-    pub interact: Vec<Cell>,
 }
 
 impl Default for Tree {
@@ -130,8 +128,6 @@ impl Tree {
             cellhist: [0; MAXLEVEL],
             subnhist: [0; MAXLEVEL],
             actlen: 0,
-            active: Vec::new(),
-            interact: Vec::new(),
         }
     }
 
@@ -416,10 +412,6 @@ impl Simulation {
         tree.startoutput()?;
         if tree.nstep == 0 {
             tree.treeforce()?;
-            tree.output()?;
-        }
-        while (tree.tstop as f64 - tree.tnow as f64) > 0.01 * tree.dtime as f64 {
-            tree.stepsystem()?;
             tree.output()?;
         }
         while (tree.tstop as f64 - tree.tnow as f64) > 0.01 * tree.dtime as f64 {

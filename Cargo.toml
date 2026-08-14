@@ -15,3 +15,7 @@ libc = "0.2"
 [[bench]]
 name = "throughput"
 harness = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

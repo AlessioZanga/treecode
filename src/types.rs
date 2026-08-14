@@ -16,15 +16,20 @@ pub fn cputime() -> Result<f64> {
         .rsplit_once(')')
         .map(|(_, rest)| rest)
         .ok_or(TreeError::CpuTimeFailed)?;
-    let fields: Vec<&str> = after_comm.split_whitespace().collect();
-    let utime: f64 = fields
-        .get(11)
-        .and_then(|s| s.parse().ok())
-        .ok_or(TreeError::CpuTimeFailed)?;
-    let stime: f64 = fields
-        .get(12)
-        .and_then(|s| s.parse().ok())
-        .ok_or(TreeError::CpuTimeFailed)?;
+    let mut utime: Option<f64> = None;
+    let mut stime: Option<f64> = None;
+    for (i, tok) in after_comm.split_whitespace().enumerate() {
+        match i {
+            11 => utime = tok.parse().ok(),
+            12 => stime = tok.parse().ok(),
+            _ => {}
+        }
+        if i >= 12 {
+            break;
+        }
+    }
+    let utime = utime.ok_or(TreeError::CpuTimeFailed)?;
+    let stime = stime.ok_or(TreeError::CpuTimeFailed)?;
     const CLK_TCK: f64 = 100.0; // Linux USER_HZ == sysconf(_SC_CLK_TCK)
     Ok((utime + stime) / (60.0 * CLK_TCK))
 }
@@ -169,6 +174,23 @@ impl Default for Cell {
             rcrit2: 0.0,
             more: None,
             sorq: Sorq::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Interact {
+    pub mass: Real,
+    pub pos: Vector,
+    pub quad: Option<Matrix>,
+}
+
+impl Default for Interact {
+    fn default() -> Self {
+        Interact {
+            mass: 0.0,
+            pos: Vector::zero(),
+            quad: None,
         }
     }
 }

@@ -187,21 +187,22 @@ impl Tree {
         let mut q: CellId = self.root.ok_or(TreeError::TreeStructure)?;
         let mut qind = self.subindex(p, q);
         let mut qsize = self.rsize;
-        while self.cells[q].sorq.subp()[qind].is_some() {
-            let sub_q = self.cells[q].sorq.subp()[qind];
-            if let Some(NodeRef::Body(other)) = sub_q {
+        loop {
+            let cur = self.cells[q].sorq.subp()[qind];
+            if cur.is_none() {
+                break;
+            }
+            if let Some(NodeRef::Body(other)) = cur {
                 self.require_distinct_positions(p, other)?;
                 let c = self.makecell()?;
                 self.set_cell_midpoint(c, q, p, qsize);
                 let sub = self.subindex(other, c);
                 self.cells[c].sorq.subp_mut()[sub] = Some(NodeRef::Body(other));
                 self.cells[q].sorq.subp_mut()[qind] = Some(NodeRef::Cell(c));
+                q = c;
+            } else if let Some(NodeRef::Cell(c)) = cur {
+                q = c;
             }
-            let next = self.cells[q].sorq.subp()[qind];
-            q = match next {
-                Some(NodeRef::Cell(c)) => c,
-                _ => return Err(TreeError::TreeStructure),
-            };
             qind = self.subindex(p, q);
             qsize /= 2.0;
         }
@@ -224,9 +225,8 @@ impl Tree {
     fn subindex(&self, p: BodyId, q: CellId) -> usize {
         let mut ind: usize = 0;
         for k in 0..NDIM {
-            if self.cells[q].cellnode.pos[k] <= self.bodytab[p].bodynode.pos[k] {
-                ind += NSUB >> (k + 1);
-            }
+            ind |= usize::from(self.cells[q].cellnode.pos[k] <= self.bodytab[p].bodynode.pos[k])
+                << (NDIM - 1 - k);
         }
         ind
     }
@@ -269,8 +269,9 @@ impl Tree {
         cmpos: &mut Vector,
     ) -> Result<()> {
         let mut tmpv: Vector = Vector::zero();
+        let subp = *self.cells[p].sorq.subp();
         for i in 0..NSUB {
-            let sub = self.cells[p].sorq.subp()[i];
+            let sub = subp[i];
             if let Some(q) = sub {
                 self.subnhist[lev as usize] += 1;
                 if let NodeRef::Cell(cid) = q {
@@ -323,8 +324,9 @@ impl Tree {
 
     fn collect_descendants(&self, c: CellId, desc: &mut [Option<NodeRef>]) -> usize {
         let mut ndesc: usize = 0;
+        let subp = self.cells[c].sorq.subp();
         for i in 0..NSUB {
-            if let Some(s) = self.cells[c].sorq.subp()[i] {
+            if let Some(s) = subp[i] {
                 desc[ndesc] = Some(s);
                 ndesc += 1;
             }

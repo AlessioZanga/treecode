@@ -1,3 +1,11 @@
 [env]
 RUST_TEST_NOCAPTURE = "1"
 RUST_TEST_THREADS = "1"
+
+[build]
+# native tunes for this CPU (AVX2). FMA is explicitly DISABLED (-fma): rustc keeps
+# FP contraction off by default, and enabling FMA (via target-feature=+fma plus
+# f32::mul_add) changes f32 rounding and breaks byte-exact parity with the SSE2 C
+# reference -- with no measurable speedup (the vectorized vmulps/vaddps path is
+# already optimal). Keep -fma so output matches external/treecode bit-for-bit.
+rustflags = ["-C", "target-cpu=native", "-C", "target-feature=-fma"]

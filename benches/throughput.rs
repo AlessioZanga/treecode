@@ -48,4 +48,12 @@ fn main() {
     } else {
         println!("reference C binary not found at {cbin}; skipping comparison");
     }
+
+    println!(
+        "interaction record: Interact={} B vs Cell={} B (≈{:.1}x smaller)",
+        std::mem::size_of::<treecode::types::Interact>(),
+        std::mem::size_of::<treecode::types::Cell>(),
+        std::mem::size_of::<treecode::types::Cell>() as f64
+            / std::mem::size_of::<treecode::types::Interact>() as f64,
+    );
 }
