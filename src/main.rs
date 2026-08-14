@@ -16,13 +16,10 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use treecode::types::nstep;
-
     #[test]
     fn binary_entry_runs_simulation() {
         let args = ["treecode", "nbody=30", "tstop=0.01", "dtout=0.005"];
-        treecode::treecode::run(&args).unwrap();
-        let nstep_val = unsafe { nstep };
-        assert!(nstep_val > 0, "simulation should advance steps");
+        let tree = treecode::treecode::run(&args).unwrap();
+        assert!(tree.nstep > 0, "simulation should advance steps");
     }
 }

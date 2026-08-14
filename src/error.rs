@@ -78,9 +78,21 @@ pub enum TreeError {
 
     #[error("help")]
     Help,
+
+    #[error("{0}")]
+    Message(String),
 }
 
 pub fn eprintf(fmt: &str) {
     eprint!("{}", fmt);
     let _ = std::io::stderr().flush();
+}
+
+/// Infallible logging helper that keeps the C `error()` name. It reports the
+/// message (via [`eprintf`]) and returns a [`TreeError::Message`] so it can be
+/// used with `?` at call sites that previously called the C `error()` macro
+/// and then `exit()`. The binary `main` remains the only place that exits.
+pub fn error(fmt: &str) -> TreeError {
+    eprintf(fmt);
+    TreeError::Message(fmt.to_string())
 }

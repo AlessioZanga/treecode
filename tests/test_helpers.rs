@@ -1,9 +1,8 @@
 use std::os::unix::io::RawFd;
 use std::path::{Path, PathBuf};
 
-use treecode::types::{
-    matrix_identity, matrix_zero, nbody, vector_length, vector_zero, Matrix, Vector,
-};
+use treecode::vecmath::{matrix_identity, matrix_zero, vector_length, vector_zero};
+use treecode::vecmath::{Matrix, Vector};
 
 const STDOUT_FD: RawFd = 1;
 
@@ -36,52 +35,52 @@ impl Drop for StdoutCapture {
     }
 }
 
-fn run_rust_in(dir: &Path, args: &[&str]) {
+fn run_rust_in(dir: &Path, args: &[&str]) -> treecode::treecode::Tree {
     let cap = StdoutCapture::new(dir);
     let mut full: Vec<String> = vec!["treecode".to_string()];
     full.extend(args.iter().map(|s| s.to_string()));
     let refs: Vec<&str> = full.iter().map(|s| s.as_str()).collect();
-    treecode::treecode::run(&refs).unwrap();
+    let tree = treecode::treecode::run(&refs).unwrap();
     drop(cap);
+    tree
 }
 
 #[test]
 fn tree_and_force_accessors() {
     let dir = tempfile::TempDir::new().unwrap();
-    run_rust_in(
+    let tree = run_rust_in(
         dir.path(),
         &["nbody=60", "usequad=true", "tstop=0.02", "dtout=0.01"],
     );
 
-    let depth = treecode::treeload::tree_depth();
+    let depth = tree.tree_depth();
     assert!((2..=32).contains(&depth), "depth out of range: {}", depth);
-    let ncell = treecode::treeload::cell_count();
+    let ncell = tree.cell_count();
     assert!(ncell > 0);
-    let build_time = treecode::treeload::tree_build_time();
+    let build_time = tree.tree_build_time();
     assert!(build_time >= 0.0);
 
-    let max_active = treecode::treegrav::force_max_active();
+    let max_active = tree.force_max_active();
     assert!(max_active > 0);
-    assert!(treecode::treegrav::force_bb_calc() >= 0);
-    assert!(treecode::treegrav::force_bc_calc() >= 0);
-    let cpu = treecode::treegrav::force_cpu_time();
+    assert!(tree.force_bb_calc() >= 0);
+    assert!(tree.force_bc_calc() >= 0);
+    let cpu = tree.force_cpu_time();
     assert!(cpu >= 0.0);
 }
 
 #[test]
 fn save_restore_roundtrip() {
     let dir = tempfile::TempDir::new().unwrap();
-    run_rust_in(dir.path(), &["nbody=30", "tstop=0.02", "dtout=0.01"]);
+    let mut tree = run_rust_in(dir.path(), &["nbody=30", "tstop=0.02", "dtout=0.01"]);
 
     let state = dir.path().join("w.rst");
     let state_str = state.display().to_string();
-    treecode::treeio::savestate(&state_str).unwrap();
+    tree.savestate(&state_str).unwrap();
     assert!(state.exists());
 
     run_rust_in(dir.path(), &["nbody=30", "tstop=0.03", "dtout=0.01"]);
-    treecode::treeio::restorestate(&state_str).unwrap();
-    let nbody_val = unsafe { nbody };
-    assert_eq!(nbody_val, 30);
+    tree.restorestate(&state_str).unwrap();
+    assert_eq!(tree.nbody, 30);
 }
 
 #[test]

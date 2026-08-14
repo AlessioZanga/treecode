@@ -1,158 +1,17 @@
 #![allow(
     clippy::needless_range_loop,
-    static_mut_refs,
-    // Raw-pointer tree access is temporary (removed by the Phase 2 arena);
+    clippy::too_many_arguments,
+    // Raw-pointer tree access is temporary (removed by the Phase 4 arena);
     // indexing a `Deref` field through a raw-pointer deref is intentional here.
     dangerous_implicit_autorefs
 )]
 
 use crate::error::Result;
 use crate::error::TreeError;
-use crate::types::{
-    actmax, allocate, cpuforce, cputime, eps, nbbcalc, nbccalc, root, rsize, tdepth, theta,
-    usequad, Body, Cell, Node, Real, Vector, BODY, CELL, NDIM, NSUB,
-};
+use crate::treecode::Tree;
+use crate::types::{allocate, cputime, Body, Cell, Node, Real, Vector, BODY, CELL, NDIM, NSUB};
 
 const FACTIVE: Real = 0.75;
-
-static mut ACTLEN: i32 = 0;
-static mut ACTIVE: *mut *mut Node = std::ptr::null_mut();
-static mut INTERACT: *mut Cell = std::ptr::null_mut();
-
-pub fn gravcalc() -> Result<()> {
-    unsafe {
-        let rmid: Vector = Vector::zero();
-
-        ACTLEN = estimate_active_length();
-        ACTIVE = allocate(ACTLEN as usize * std::mem::size_of::<*mut Node>())? as *mut *mut Node;
-        INTERACT = allocate(ACTLEN as usize * std::mem::size_of::<Cell>())? as *mut Cell;
-        let cpustart = cputime()?;
-        actmax = 0;
-        nbbcalc = 0;
-        nbccalc = 0;
-        *ACTIVE = root as *mut Node;
-        walktree(
-            ACTIVE,
-            ACTIVE.add(1),
-            INTERACT,
-            INTERACT.add(ACTLEN as usize),
-            root as *mut Node,
-            rsize,
-            rmid,
-        )?;
-        cpuforce = (cputime()? - cpustart) as Real;
-        libc::free(ACTIVE as *mut libc::c_void);
-        libc::free(INTERACT as *mut libc::c_void);
-    }
-    Ok(())
-}
-
-unsafe fn estimate_active_length() -> i32 {
-    let base = (FACTIVE * 216.0 * tdepth as Real) as i32;
-    (base as Real * theta.powf(-2.5)) as i32
-}
-
-unsafe fn walktree(
-    aptr: *mut *mut Node,
-    nptr: *mut *mut Node,
-    cptr: *mut Cell,
-    bptr: *mut Cell,
-    p: *mut Node,
-    psize: Real,
-    pmid: Vector,
-) -> Result<()> {
-    if (*p).update != 0 {
-        let mut np = nptr;
-        let actsafe = ACTLEN - NSUB as i32;
-        let mut cptr = cptr;
-        let mut bptr = bptr;
-        let mut ap = aptr;
-        while ap < nptr {
-            let apnode = *ap;
-            if (*apnode).node_type == CELL {
-                if accept(apnode, psize, pmid) {
-                    let acell = apnode as *mut Cell;
-                    (*cptr).cellnode.mass = (*apnode).mass;
-                    (*cptr).cellnode.pos = (*apnode).pos;
-                    (*cptr).sorq.quad = (*acell).sorq.quad;
-                    cptr = cptr.add(1);
-                } else {
-                    if np.offset_from(ACTIVE) >= actsafe as isize {
-                        return Err(TreeError::ActiveListOverflow);
-                    }
-                    let mut q = (*(apnode as *mut Cell)).more;
-                    while q != (*apnode).next {
-                        *np = q;
-                        np = np.add(1);
-                        q = (*q).next;
-                    }
-                }
-            } else if apnode != p {
-                bptr = bptr.sub(1);
-                (*bptr).cellnode.mass = (*apnode).mass;
-                (*bptr).cellnode.pos = (*apnode).pos;
-            }
-            ap = ap.add(1);
-        }
-        let nact = np.offset_from(ACTIVE) as i32;
-        if nact > actmax {
-            actmax = nact;
-        }
-        if np != nptr {
-            walksub(nptr, np, cptr, bptr, p, psize, pmid)?;
-        } else {
-            if (*p).node_type != BODY {
-                return Err(TreeError::RecursionTerminated);
-            }
-            gravsum(p as *mut Body, cptr, bptr);
-        }
-    }
-    Ok(())
-}
-
-unsafe fn accept(c: *mut Node, psize: Real, pmid: Vector) -> bool {
-    let mut dmax = psize;
-    let mut dsq: Real = 0.0;
-    for k in 0..NDIM {
-        let mut dk = (*c).pos[k] - pmid[k];
-        if dk < 0.0 {
-            dk = -dk;
-        }
-        if dk > dmax {
-            dmax = dk;
-        }
-        dk -= 0.5 * psize;
-        if dk > 0.0 {
-            dsq += dk * dk;
-        }
-    }
-    let rcrit2 = (*(c as *mut Cell)).rcrit2;
-    dsq > rcrit2 && dmax > 1.5 * psize
-}
-
-unsafe fn walksub(
-    nptr: *mut *mut Node,
-    np: *mut *mut Node,
-    cptr: *mut Cell,
-    bptr: *mut Cell,
-    p: *mut Node,
-    psize: Real,
-    pmid: Vector,
-) -> Result<()> {
-    let poff = psize / 4.0;
-    if (*p).node_type == CELL {
-        let mut q = (*(p as *mut Cell)).more;
-        while q != (*p).next {
-            let nmid = next_midpoint(pmid, (*q).pos, poff);
-            walktree(nptr, np, cptr, bptr, q, psize / 2.0, nmid)?;
-            q = (*q).next;
-        }
-    } else {
-        let nmid = next_midpoint(pmid, (*p).pos, poff);
-        walktree(nptr, np, cptr, bptr, p, psize / 2.0, nmid)?;
-    }
-    Ok(())
-}
 
 fn next_midpoint(pmid: Vector, pos: Vector, poff: Real) -> Vector {
     let mut nmid = Vector::zero();
@@ -162,29 +21,8 @@ fn next_midpoint(pmid: Vector, pos: Vector, poff: Real) -> Vector {
     nmid
 }
 
-unsafe fn gravsum(p0: *mut Body, cptr: *mut Cell, bptr: *mut Cell) {
-    let pos0 = (*p0).bodynode.pos;
-    let mut phi0: Real = 0.0;
-    let mut acc0: Vector = Vector::zero();
-    if usequad != 0 {
-        sumcell(INTERACT, cptr, pos0, &mut phi0, &mut acc0);
-    } else {
-        sumnode(INTERACT, cptr, pos0, &mut phi0, &mut acc0);
-    }
-    sumnode(
-        bptr,
-        INTERACT.add(ACTLEN as usize),
-        pos0,
-        &mut phi0,
-        &mut acc0,
-    );
-    (*p0).phi = phi0;
-    (*p0).acc = acc0;
-    nbbcalc += INTERACT.add(ACTLEN as usize).offset_from(bptr) as i32;
-    nbccalc += cptr.offset_from(INTERACT) as i32;
-}
-
 unsafe fn sumnode(
+    eps: Real,
     start: *mut Cell,
     finish: *mut Cell,
     pos0: Vector,
@@ -206,6 +44,7 @@ unsafe fn sumnode(
 }
 
 unsafe fn sumcell(
+    eps: Real,
     start: *mut Cell,
     finish: *mut Cell,
     pos0: Vector,
@@ -264,18 +103,184 @@ fn add_mul_acc2(acc0: &mut Vector, dr: &Vector, s: Real, w: &Vector, r: Real) {
     }
 }
 
-pub fn force_max_active() -> i32 {
-    unsafe { actmax }
-}
+impl Tree {
+    pub fn gravcalc(&mut self) -> Result<()> {
+        unsafe {
+            let rmid: Vector = Vector::zero();
 
-pub fn force_bb_calc() -> i32 {
-    unsafe { nbbcalc }
-}
+            self.actlen = self.estimate_active_length();
+            self.active = allocate(self.actlen as usize * std::mem::size_of::<*mut Node>())?
+                as *mut *mut Node;
+            self.interact =
+                allocate(self.actlen as usize * std::mem::size_of::<Cell>())? as *mut Cell;
+            let cpustart = cputime()?;
+            self.actmax = 0;
+            self.nbbcalc = 0;
+            self.nbccalc = 0;
+            *self.active = self.root as *mut Node;
+            self.walktree(
+                self.active,
+                self.active.add(1),
+                self.interact,
+                self.interact.add(self.actlen as usize),
+                self.root as *mut Node,
+                self.rsize,
+                rmid,
+            )?;
+            self.cpuforce = (cputime()? - cpustart) as Real;
+            libc::free(self.active as *mut libc::c_void);
+            libc::free(self.interact as *mut libc::c_void);
+            self.active = std::ptr::null_mut();
+            self.interact = std::ptr::null_mut();
+        }
+        Ok(())
+    }
 
-pub fn force_bc_calc() -> i32 {
-    unsafe { nbccalc }
-}
+    unsafe fn estimate_active_length(&self) -> i32 {
+        let base = (FACTIVE * 216.0 * self.tdepth as Real) as i32;
+        (base as Real * self.theta.powf(-2.5)) as i32
+    }
 
-pub fn force_cpu_time() -> f64 {
-    unsafe { cpuforce as f64 }
+    unsafe fn walktree(
+        &mut self,
+        aptr: *mut *mut Node,
+        nptr: *mut *mut Node,
+        cptr: *mut Cell,
+        bptr: *mut Cell,
+        p: *mut Node,
+        psize: Real,
+        pmid: Vector,
+    ) -> Result<()> {
+        if (*p).update != 0 {
+            let mut np = nptr;
+            let actsafe = self.actlen - NSUB as i32;
+            let mut cptr = cptr;
+            let mut bptr = bptr;
+            let mut ap = aptr;
+            while ap < nptr {
+                let apnode = *ap;
+                if (*apnode).node_type == CELL {
+                    if Self::accept(apnode, psize, pmid) {
+                        let acell = apnode as *mut Cell;
+                        (*cptr).cellnode.mass = (*apnode).mass;
+                        (*cptr).cellnode.pos = (*apnode).pos;
+                        (*cptr).sorq.quad = (*acell).sorq.quad;
+                        cptr = cptr.add(1);
+                    } else {
+                        if np.offset_from(self.active) >= actsafe as isize {
+                            return Err(TreeError::ActiveListOverflow);
+                        }
+                        let mut q = (*(apnode as *mut Cell)).more;
+                        while q != (*apnode).next {
+                            *np = q;
+                            np = np.add(1);
+                            q = (*q).next;
+                        }
+                    }
+                } else if apnode != p {
+                    bptr = bptr.sub(1);
+                    (*bptr).cellnode.mass = (*apnode).mass;
+                    (*bptr).cellnode.pos = (*apnode).pos;
+                }
+                ap = ap.add(1);
+            }
+            let nact = np.offset_from(self.active) as i32;
+            if nact > self.actmax {
+                self.actmax = nact;
+            }
+            if np != nptr {
+                self.walksub(nptr, np, cptr, bptr, p, psize, pmid)?;
+            } else {
+                if (*p).node_type != BODY {
+                    return Err(TreeError::RecursionTerminated);
+                }
+                self.gravsum(p as *mut Body, cptr, bptr);
+            }
+        }
+        Ok(())
+    }
+
+    unsafe fn accept(c: *mut Node, psize: Real, pmid: Vector) -> bool {
+        let mut dmax = psize;
+        let mut dsq: Real = 0.0;
+        for k in 0..NDIM {
+            let mut dk = (*c).pos[k] - pmid[k];
+            if dk < 0.0 {
+                dk = -dk;
+            }
+            if dk > dmax {
+                dmax = dk;
+            }
+            dk -= 0.5 * psize;
+            if dk > 0.0 {
+                dsq += dk * dk;
+            }
+        }
+        let rcrit2 = (*(c as *mut Cell)).rcrit2;
+        dsq > rcrit2 && dmax > 1.5 * psize
+    }
+
+    unsafe fn walksub(
+        &mut self,
+        nptr: *mut *mut Node,
+        np: *mut *mut Node,
+        cptr: *mut Cell,
+        bptr: *mut Cell,
+        p: *mut Node,
+        psize: Real,
+        pmid: Vector,
+    ) -> Result<()> {
+        let poff = psize / 4.0;
+        if (*p).node_type == CELL {
+            let mut q = (*(p as *mut Cell)).more;
+            while q != (*p).next {
+                let nmid = next_midpoint(pmid, (*q).pos, poff);
+                self.walktree(nptr, np, cptr, bptr, q, psize / 2.0, nmid)?;
+                q = (*q).next;
+            }
+        } else {
+            let nmid = next_midpoint(pmid, (*p).pos, poff);
+            self.walktree(nptr, np, cptr, bptr, p, psize / 2.0, nmid)?;
+        }
+        Ok(())
+    }
+
+    unsafe fn gravsum(&mut self, p0: *mut Body, cptr: *mut Cell, bptr: *mut Cell) {
+        let pos0 = (*p0).bodynode.pos;
+        let mut phi0: Real = 0.0;
+        let mut acc0: Vector = Vector::zero();
+        if self.usequad != 0 {
+            sumcell(self.eps, self.interact, cptr, pos0, &mut phi0, &mut acc0);
+        } else {
+            sumnode(self.eps, self.interact, cptr, pos0, &mut phi0, &mut acc0);
+        }
+        sumnode(
+            self.eps,
+            bptr,
+            self.interact.add(self.actlen as usize),
+            pos0,
+            &mut phi0,
+            &mut acc0,
+        );
+        (*p0).phi = phi0;
+        (*p0).acc = acc0;
+        self.nbbcalc += self.interact.add(self.actlen as usize).offset_from(bptr) as i32;
+        self.nbccalc += cptr.offset_from(self.interact) as i32;
+    }
+
+    pub fn force_max_active(&self) -> i32 {
+        self.actmax
+    }
+
+    pub fn force_bb_calc(&self) -> i32 {
+        self.nbbcalc
+    }
+
+    pub fn force_bc_calc(&self) -> i32 {
+        self.nbccalc
+    }
+
+    pub fn force_cpu_time(&self) -> f64 {
+        self.cpuforce as f64
+    }
 }

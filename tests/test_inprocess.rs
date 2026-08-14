@@ -262,9 +262,15 @@ fn write_snapshot_input(path: &Path, nbody: usize) {
 #[test]
 fn inprocess_real_snapshot() {
     let dir = tempfile::TempDir::new().unwrap();
+    let input = dir.path().join("snap_0.txt");
+    write_snapshot_input(&input, 20);
     let out = run_rust_in(
         dir.path(),
-        &["in=/tmp/snap_0.txt", "tstop=0.01", "dtout=0.005"],
+        &[
+            &format!("in={}", input.display()),
+            "tstop=0.01",
+            "dtout=0.005",
+        ],
     );
     assert!(out.contains("|T+U|"));
 }

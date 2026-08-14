@@ -1,6 +1,6 @@
-#![allow(non_upper_case_globals)]
+#![allow(clippy::new_without_default)]
 
-use std::os::raw::{c_char, c_int, c_short};
+use std::os::raw::c_short;
 
 pub fn allocate(nb: usize) -> Result<*mut u8> {
     unsafe {
@@ -33,8 +33,7 @@ pub fn scanopt(opt: &str, key: &str) -> bool {
 }
 
 pub use crate::error::eprintf;
-pub use crate::error::{Result, TreeError};
-pub use crate::vecmath::{matrix_identity, matrix_zero, vector_length, vector_zero};
+pub use crate::error::{error, Result, TreeError};
 pub use crate::vecmath::{Matrix, Real, Vector, NDIM};
 
 pub const BODY: i16 = 0o1;
@@ -51,6 +50,18 @@ pub struct Node {
     pub next: *mut Node,
 }
 
+impl Node {
+    pub fn new() -> Self {
+        Node {
+            node_type: 0,
+            update: 0,
+            mass: 0.0,
+            pos: Vector::zero(),
+            next: std::ptr::null_mut(),
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Body {
@@ -58,6 +69,17 @@ pub struct Body {
     pub vel: Vector,
     pub acc: Vector,
     pub phi: Real,
+}
+
+impl Body {
+    pub fn new() -> Self {
+        Body {
+            bodynode: Node::new(),
+            vel: Vector::zero(),
+            acc: Vector::zero(),
+            phi: 0.0,
+        }
+    }
 }
 
 #[repr(C)]
@@ -87,40 +109,6 @@ pub struct Cell {
     pub more: *mut Node,
     pub sorq: Sorq,
 }
-
-pub static mut root: *mut Cell = std::ptr::null_mut();
-pub static mut rsize: Real = 0.0;
-pub static mut ncell: c_int = 0;
-pub static mut tdepth: c_int = 0;
-pub static mut cputree: Real = 0.0;
-pub static mut theta: Real = 0.0;
-pub static mut options: *mut c_char = std::ptr::null_mut();
-pub static mut usequad: u8 = 0;
-pub static mut eps: Real = 0.0;
-pub static mut actmax: c_int = 0;
-pub static mut nbbcalc: c_int = 0;
-pub static mut nbccalc: c_int = 0;
-pub static mut cpuforce: Real = 0.0;
-pub static mut infile: *mut c_char = std::ptr::null_mut();
-pub static mut outfile: *mut c_char = std::ptr::null_mut();
-pub static mut savefile: *mut c_char = std::ptr::null_mut();
-pub static mut dtime: Real = 0.0;
-pub static mut dtout: Real = 0.0;
-pub static mut tstop: Real = 0.0;
-pub static mut headline: *mut c_char = std::ptr::null_mut();
-pub static mut tnow: Real = 0.0;
-pub static mut tout: Real = 0.0;
-pub static mut nstep: c_int = 0;
-pub static mut nbody: c_int = 0;
-pub static mut bodytab: *mut Body = std::ptr::null_mut();
-
-pub static mut MTOT: Real = 0.0;
-pub static mut ETOT: [Real; 3] = [0.0; 3];
-pub static mut KETEN: Matrix = Matrix::zero();
-pub static mut PETEN: Matrix = Matrix::zero();
-pub static mut CMPOS: Vector = Vector::zero();
-pub static mut CMVEL: Vector = Vector::zero();
-pub static mut AMVEC: Vector = Vector::zero();
 
 #[cfg(test)]
 mod tests {
