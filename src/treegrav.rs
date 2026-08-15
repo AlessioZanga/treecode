@@ -66,7 +66,7 @@ fn sumnode(
     phi0: &mut f32,
     acc0: &mut Vector,
 ) {
-    for c in &interact[start..finish] {
+    interact[start..finish].iter().for_each(|c| {
         let (dr, mut dr2) = separation(c, pos0);
         dr2 += eps2;
         let drab = dr2.sqrt();
@@ -74,7 +74,7 @@ fn sumnode(
         *phi0 -= phi_p;
         let mr3i = phi_p / dr2;
         add_mul_acc(acc0, &dr, mr3i);
-    }
+    });
 }
 
 #[inline]
@@ -87,7 +87,7 @@ fn sumcell(
     phi0: &mut f32,
     acc0: &mut Vector,
 ) {
-    for c in &interact[start..finish] {
+    interact[start..finish].iter().for_each(|c| {
         let (dr, mut dr2) = separation(c, pos0);
         dr2 += eps2;
         let drab = dr2.sqrt();
@@ -99,7 +99,7 @@ fn sumcell(
         *phi0 -= phi_p + phi_q;
         mr3i += 5.0 * phi_q / dr2;
         add_mul_acc2(acc0, &dr, mr3i, &qdr, -dr5i);
-    }
+    });
 }
 
 #[inline]

@@ -33,7 +33,16 @@ jobs:
         run: make
 
       - name: Run tests
-        run: cargo test --all-targets
+        # Don't use `--all-targets`: the `throughput` bench is `harness = false`,
+        # so `cargo test` would *execute* it in debug profile (vs the C reference
+        # built with -O3), making the rust/c timing assertion meaningless/flaky.
+        # Benches are meant to run via `cargo bench` (release) locally.
+        run: cargo test
+
+      - name: Compile-check benchmarks (no execution)
+        # Build the benches to catch compile errors without running the timing
+        # assertion, which must only run in release via `cargo bench`.
+        run: cargo build --benches
 
   lint:
     name: fmt + clippy
@@ -60,4 +69,6 @@ jobs:
         run: cargo +nightly fmt --all --check
 
       - name: cargo clippy
-        run: cargo clippy --all-targets -- -D warnings
+        # The nightly install above makes nightly the default toolchain, so pin
+        # clippy explicitly to stable (which has the clippy component added).
+        run: cargo +stable clippy --all-targets -- -D warnings

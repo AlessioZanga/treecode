@@ -131,22 +131,27 @@ impl Tree {
         self.nbody = nb;
         self.bodytab = (0..nb).map(|_| Body::new()).collect();
 
-        for body in &mut self.bodytab {
+        self.bodytab.iter_mut().try_for_each(|body| {
             body.bodynode.mass = parse_f64(&toks, &mut i)? as f32;
-        }
-        for body in &mut self.bodytab {
-            for p in &mut body.bodynode.pos.0 {
+            Ok(())
+        })?;
+        self.bodytab.iter_mut().try_for_each(|body| {
+            body.bodynode.pos.0.iter_mut().try_for_each(|p| {
                 *p = parse_f64(&toks, &mut i)? as f32;
-            }
-        }
-        for body in &mut self.bodytab {
-            for p in &mut body.vel.0 {
+                Ok(())
+            })?;
+            Ok(())
+        })?;
+        self.bodytab.iter_mut().try_for_each(|body| {
+            body.vel.0.iter_mut().try_for_each(|p| {
                 *p = parse_f64(&toks, &mut i)? as f32;
-            }
-        }
-        for body in &mut self.bodytab {
+                Ok(())
+            })?;
+            Ok(())
+        })?;
+        self.bodytab.iter_mut().for_each(|body| {
             body.bodynode.node_type = BODY;
-        }
+        });
 
         if scanopt(&self.options, "reset-time") {
             self.tnow = 0.0;
@@ -277,25 +282,30 @@ impl Tree {
         out_int(f, self.nbody as i32)?;
         out_int(f, NDIM as i32)?;
         out_real(f, self.tnow)?;
-        for b in &self.bodytab {
+        self.bodytab.iter().try_for_each(|b| {
             out_real(f, b.bodynode.mass)?;
-        }
-        for b in &self.bodytab {
+            Ok(())
+        })?;
+        self.bodytab.iter().try_for_each(|b| {
             out_vector(f, b.bodynode.pos)?;
-        }
-        for b in &self.bodytab {
+            Ok(())
+        })?;
+        self.bodytab.iter().try_for_each(|b| {
             out_vector(f, b.vel)?;
-        }
+            Ok(())
+        })?;
         let opts = &self.options;
         if scanopt(opts, "out-phi") {
-            for b in &self.bodytab {
+            self.bodytab.iter().try_for_each(|b| {
                 out_real(f, b.phi)?;
-            }
+                Ok(())
+            })?;
         }
         if scanopt(opts, "out-acc") {
-            for b in &self.bodytab {
+            self.bodytab.iter().try_for_each(|b| {
                 out_vector(f, b.acc)?;
-            }
+                Ok(())
+            })?;
         }
         Ok(())
     }
@@ -310,7 +320,7 @@ impl Tree {
         vector_zero(&mut self.cmpos);
         vector_zero(&mut self.cmvel);
 
-        for p in &self.bodytab {
+        self.bodytab.iter().for_each(|p| {
             let m = p.bodynode.mass;
             self.mtot += m;
 
@@ -339,7 +349,7 @@ impl Tree {
                 self.cmpos[k] += m * p.bodynode.pos[k];
                 self.cmvel[k] += m * p.vel[k];
             }
-        }
+        });
 
         self.etot[0] = self.etot[1] + self.etot[2];
         for k in 0..NDIM {
@@ -384,22 +394,25 @@ impl Tree {
     }
 
     fn write_bodytab(&self, f: &mut impl Write) -> Result<()> {
-        for b in &self.bodytab {
+        self.bodytab.iter().try_for_each(|b| {
             write_int(f, b.bodynode.node_type as i32)?;
             write_int(f, b.bodynode.update as i32)?;
             write_real(f, b.bodynode.mass)?;
-            for &p in &b.bodynode.pos.0 {
+            b.bodynode.pos.0.iter().try_for_each(|&p| {
                 write_real(f, p)?;
-            }
-            for &p in &b.vel.0 {
+                Ok(())
+            })?;
+            b.vel.0.iter().try_for_each(|&p| {
                 write_real(f, p)?;
-            }
-            for &p in &b.acc.0 {
+                Ok(())
+            })?;
+            b.acc.0.iter().try_for_each(|&p| {
                 write_real(f, p)?;
-            }
+                Ok(())
+            })?;
             write_real(f, b.phi)?;
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     pub fn restorestate(&mut self, file: &str) -> Result<()> {
@@ -438,21 +451,25 @@ impl Tree {
         self.rsize = read_real(f)?;
         self.nbody = read_int(f)? as usize;
         self.bodytab = (0..self.nbody).map(|_| Body::new()).collect();
-        for b in &mut self.bodytab {
+        self.bodytab.iter_mut().try_for_each(|b| {
             b.bodynode.node_type = read_int(f)? as i16;
             b.bodynode.update = read_int(f)? as i16;
             b.bodynode.mass = read_real(f)?;
-            for p in &mut b.bodynode.pos.0 {
+            b.bodynode.pos.0.iter_mut().try_for_each(|p| {
                 *p = read_real(f)?;
-            }
-            for p in &mut b.vel.0 {
+                Ok(())
+            })?;
+            b.vel.0.iter_mut().try_for_each(|p| {
                 *p = read_real(f)?;
-            }
-            for p in &mut b.acc.0 {
+                Ok(())
+            })?;
+            b.acc.0.iter_mut().try_for_each(|p| {
                 *p = read_real(f)?;
-            }
+                Ok(())
+            })?;
             b.phi = read_real(f)?;
-        }
+            Ok(())
+        })?;
         Ok(())
     }
 }

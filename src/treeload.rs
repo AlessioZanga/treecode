@@ -101,10 +101,7 @@ impl Tree {
     }
 
     fn load_all_bodies(&mut self, nbody: usize) -> Result<()> {
-        for i in 0..nbody {
-            self.loadbody(i)?;
-        }
-        Ok(())
+        (0..nbody).try_for_each(|i| self.loadbody(i))
     }
 
     fn parse_options(&mut self) -> Result<()> {
@@ -161,14 +158,14 @@ impl Tree {
     fn expandbox(&mut self) -> Result<()> {
         let root = self.root.ok_or(TreeError::TreeStructure)?;
         let mut dmax: f32 = 0.0;
-        for p in &self.bodytab {
+        self.bodytab.iter().for_each(|p| {
             for k in 0..NDIM {
                 let d = (p.bodynode.pos[k] - self.cells[root].cellnode.pos[k]).abs();
                 if d > dmax {
                     dmax = d;
                 }
             }
-        }
+        });
         while self.rsize < 2.0 * dmax {
             self.rsize *= 2.0;
         }
@@ -263,9 +260,9 @@ impl Tree {
     ) -> Result<()> {
         let mut tmpv: Vector = Vector::zero();
         let subp = *self.cells[p].sorq.subp();
-        for sub in &subp {
+        subp.iter().try_for_each(|sub| {
             if sub.is_none() {
-                continue;
+                return Ok(());
             }
             self.subnhist[lev] += 1;
             if sub.is_cell() {
@@ -279,7 +276,8 @@ impl Tree {
                 tmpv[k] = qnode.pos[k] * qnode.mass;
                 cmpos[k] += tmpv[k];
             }
-        }
+            Ok(())
+        })?;
         Ok(())
     }
 
@@ -319,13 +317,13 @@ impl Tree {
     fn collect_descendants(&self, c: CellId, desc: &mut [NodeRef]) -> usize {
         let mut ndesc: usize = 0;
         let subp = self.cells[c].sorq.subp();
-        for s in subp.iter() {
+        subp.iter().for_each(|s| {
             if s.is_none() {
-                continue;
+                return;
             }
             desc[ndesc] = *s;
             ndesc += 1;
-        }
+        });
         ndesc
     }
 
@@ -337,13 +335,13 @@ impl Tree {
             let ndesc = self.collect_descendants(cid, &mut desc);
             self.cells[cid].more = desc[0];
             desc[ndesc] = n;
-            for i in 0..ndesc {
-                let child = desc[i];
+            desc[..=ndesc].windows(2).try_for_each(|w| {
+                let child = w[0];
                 if child.is_none() {
                     return Err(TreeError::TreeStructure);
                 }
-                self.threadtree(child, desc[i + 1])?;
-            }
+                self.threadtree(child, w[1])
+            })?;
         }
         Ok(())
     }
@@ -352,7 +350,7 @@ impl Tree {
         let mut desc: [NodeRef; NSUB] = [NodeRef::None; NSUB];
         let ndesc = self.collect_descendants(p, &mut desc);
         matrix_zero(self.cells[p].sorq.quad_mut());
-        for d in &desc[..ndesc] {
+        desc[..ndesc].iter().try_for_each(|d| {
             let q = *d;
             if q.is_none() {
                 return Err(TreeError::TreeStructure);
@@ -361,7 +359,8 @@ impl Tree {
                 self.hackquad(q.index())?;
             }
             self.accumulate_moment(p, q);
-        }
+            Ok(())
+        })?;
         Ok(())
     }
 

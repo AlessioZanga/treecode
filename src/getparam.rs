@@ -49,7 +49,7 @@ impl Config {
         });
 
         let mut current_comment: Option<String> = None;
-        for &entry in defv {
+        defv.iter().for_each(|&entry| {
             if entry.starts_with(';') {
                 current_comment = Some(entry.strip_prefix(';').unwrap_or(entry).to_string());
             } else {
@@ -67,19 +67,19 @@ impl Config {
                     flags,
                 });
             }
-        }
+        });
 
         if argv.len() > 1 && (argv[1] == "-clue" || argv[1] == "-help") {
             let p = &config.params[0];
             if argv[1] == "-clue" {
                 print!("{}", p.value);
-                for pp in &config.params[1..] {
+                config.params[1..].iter().for_each(|pp| {
                     print!(" {}={}", pp.name, pp.value);
-                }
+                });
                 println!();
             } else {
                 println!("{}", p.value);
-                for pp in &config.params[1..] {
+                config.params[1..].iter().for_each(|pp| {
                     let item = format!("  {}={}", pp.name, pp.value);
                     if let Some(ref c) = pp.comment {
                         if item.len() < 32 {
@@ -90,14 +90,14 @@ impl Config {
                     } else {
                         println!("{}", item);
                     }
-                }
+                });
             }
             return Err(TreeError::Help);
         }
 
         let mut scanpos = true;
         let mut pidx = 0;
-        for &arg in &argv[1..] {
+        argv[1..].iter().try_for_each(|&arg| {
             if let Some((name, value)) = parse_name_value_opt(arg) {
                 scanpos = false;
                 if let Some(pp) = config.params.iter_mut().find(|p| p.name == name) {
@@ -128,21 +128,22 @@ impl Config {
                     arg: arg.to_string(),
                 });
             }
-        }
+            Ok(())
+        })?;
 
         let mut needarg = false;
-        for pp in &config.params[1..] {
+        config.params[1..].iter().for_each(|pp| {
             if (pp.flags & REQPARAM != 0) && (pp.flags & DEFPARAM != 0) {
                 needarg = true;
             }
-        }
+        });
         if needarg {
             eprint!("Usage: {}", config.params[0].value);
-            for pp in &config.params[1..] {
+            config.params[1..].iter().for_each(|pp| {
                 if pp.flags & REQPARAM != 0 {
                     eprint!(" {}=???", pp.name);
                 }
-            }
+            });
             eprintln!(": required arguments missing");
             return Err(TreeError::MissingRequiredParam);
         }

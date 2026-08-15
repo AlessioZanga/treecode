@@ -134,9 +134,9 @@ impl Tree {
     }
 
     fn treeforce(&mut self) -> Result<()> {
-        for b in &mut self.bodytab {
+        self.bodytab.iter_mut().for_each(|b| {
             b.bodynode.update = 1;
-        }
+        });
         self.maketree(self.nbody)?;
         self.gravcalc()?;
         self.forcereport();
@@ -151,20 +151,20 @@ impl Tree {
         // results.
         let half_dt = self.half_dt;
 
-        for p in &mut self.bodytab {
+        self.bodytab.iter_mut().for_each(|p| {
             for k in 0..NDIM {
                 p.vel[k] += p.acc[k] * half_dt;
                 p.bodynode.pos[k] += p.vel[k] * self.dtime;
             }
-        }
+        });
 
         self.treeforce()?;
 
-        for p in &mut self.bodytab {
+        self.bodytab.iter_mut().for_each(|p| {
             for k in 0..NDIM {
                 p.vel[k] += p.acc[k] * half_dt;
             }
-        }
+        });
 
         self.nstep += 1;
         self.tnow += self.dtime;
@@ -293,7 +293,7 @@ impl Tree {
         // `self.inv_nbody` is the loop-invariant `1.0 / nbody` divisor, kept as
         // `f64` (C promotes the `1.0` literal to `double` and truncates back to
         // `float` on each store) — see `refresh_derived`.
-        for p in &mut self.bodytab {
+        self.bodytab.iter_mut().for_each(|p| {
             p.bodynode.node_type = BODY;
             p.bodynode.mass = self.inv_nbody as f32;
 
@@ -322,14 +322,14 @@ impl Tree {
                 rcm[k] = (rcm[k] as f64 + p.bodynode.pos[k] as f64 * self.inv_nbody) as f32;
                 vcm[k] = (vcm[k] as f64 + p.vel[k] as f64 * self.inv_nbody) as f32;
             }
-        }
+        });
 
-        for p in &mut self.bodytab {
+        self.bodytab.iter_mut().for_each(|p| {
             for k in 0..NDIM {
                 p.bodynode.pos[k] -= rcm[k];
                 p.vel[k] -= vcm[k];
             }
-        }
+        });
         Ok(())
     }
 }
