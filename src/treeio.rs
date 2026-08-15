@@ -430,10 +430,10 @@ impl Tree {
         let version = read_string(f)?;
         // The saved program/version are compared only as a best-effort warning;
         // a freshly built tree (e.g. `Tree::new()`) may not carry those params.
-        if let (Ok(argv0), Ok(ver)) = (getargv0(&self.config), getversion(&self.config)) {
-            if program != argv0 || version != ver {
-                println!("warning: state file may be outdated\n\n");
-            }
+        if let (Ok(argv0), Ok(ver)) = (getargv0(&self.config), getversion(&self.config))
+            && (program != argv0 || version != ver)
+        {
+            println!("warning: state file may be outdated\n\n");
         }
 
         self.dtime = read_real(f)?;

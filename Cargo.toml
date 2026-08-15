@@ -1,10 +1,19 @@
 [package]
 name = "treecode"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 thiserror = "2"
+rayon = "1"
+wide = { version = "1.6.1", default-features = false, optional = true }
+
+[features]
+# Default-on explicit portable-SIMD force-sum kernels, built on the `wide`
+# crate (stable Rust, no nightly). They are byte-exact with the C reference;
+# disable with `--no-default-features` to fall back to the scalar path.
+default = ["simd"]
+simd = ["dep:wide"]
 
 [dev-dependencies]
 assert_cmd = "2.0"

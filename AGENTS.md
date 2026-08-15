@@ -25,7 +25,9 @@ branchless rewrites that are bit‑identical (`abs`, sign tricks), extracting
 injectable I/O cores (`*_to` writers).
 
 **Gated changes** (must be verified against the byte‑exact test, or kept behind
-a feature flag): SIMD, any parallelism that reorders per‑body reductions, FMA.
+a feature flag): any parallelism that reorders per‑body reductions, FMA. (SIMD is
+now on by default via the `wide` crate and is itself gated behind the `simd`
+feature / `--no-default-features`, so it can still be disabled.)
 
 Never enable FMA: it changes `f32` rounding vs the SSE2 C reference. The build
 already sets `-C target-feature=-fma` in `.cargo/config.toml`.
@@ -90,6 +92,24 @@ runs fmt + clippy + `cargo test -- --test-threads=1`.
 - **Parallelism:** only the tree‑walk **fan‑out** form (private scratch per
   subtree, identical per‑body reduction order) is allowed. Never do per‑body
   `rayon` parallelism — it reorders interaction lists and breaks byte‑exactness.
+- **SIMD:** **on by default** (the `simd` cargo feature is in `default`); built
+  on the `wide` crate so it runs on **stable Rust** and cross‑compiles for
+  Windows (verified for `x86_64-pc-windows-gnu` and `-msvc`). `wide::f32x8` uses
+  AVX2 when present and transparently falls back to two `f32x4` on SSE2, with
+  identical per‑lane rounding either way. The kernels in `src/treegrav.rs`
+  (`sumnode_simd` / `sumcell_simd`) vectorize the *independent per‑interaction*
+  map (`sqrt`, divide, `dr*mr3i`, the quadrupole matvec) and fold back into the
+  running `f32` accumulators **one lane at a time in list order** — no FP
+  reassociation, so they stay bit‑identical to the scalar path and the C
+  reference. FMA is still avoided (the kernels use separate mul/add to match the
+  `-fma`-disabled SSE2 reference). The same pattern is applied in `stepsystem`
+  (a pure per‑body map, so lane order is irrelevant) and in the tree‑build
+  moment reductions `accumulate_subnodes`/`hackcofm` and `accumulate_moment`/
+  `hackquad` (NSUB=8 descendants map perfectly onto `f32x8`; `None` subnodes
+  contribute exactly 0). Disable with `--no-default-features` to fall back to the
+  scalar path. Verify any SIMD change with
+  `cargo test --release --test test_compare_c_rust` (the default build already
+  enables SIMD).
 - **Tests:** add unit tests next to the code (`#[cfg(test)]` modules) and
   integration tests under `tests/`. The `test_compare_c_rust` gate must remain
   green; do not weaken its byte‑for‑byte `assert_eq!` on particle files.

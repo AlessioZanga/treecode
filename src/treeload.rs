@@ -1,3 +1,8 @@
+#[cfg(feature = "simd")]
+use wide::f32x8;
+
+#[cfg(not(feature = "simd"))]
+use crate::vecmath::Matrix;
 use crate::{
     error::{Result, TreeError},
     mathfns,
@@ -5,8 +10,11 @@ use crate::{
     types::{
         BodyId, CELL, Cell, CellId, NDIM, NSUB, Node, NodeRef, Sorq, Vector, cputime, scanopt,
     },
-    vecmath::{Matrix, matrix_zero, vector_zero},
+    vecmath::{matrix_zero, vector_zero},
 };
+
+#[cfg(feature = "simd")]
+const SIMD_LANES: usize = 8;
 
 fn set_center_of_mass(p: &Cell, cmpos: &mut Vector) {
     if p.cellnode.mass > 0.0 {
@@ -56,6 +64,7 @@ fn compute_rcrit_default(cmpos: &Vector, psize: f32, theta: f32, p: &Cell) -> f3
     mathfns::rsqr(psize / theta + d.sqrt())
 }
 
+#[cfg(not(feature = "simd"))]
 fn dot_product(dr: &Vector) -> f32 {
     let mut drsq: f32 = 0.0;
     for k in 0..NDIM {
@@ -258,26 +267,70 @@ impl Tree {
         lev: usize,
         cmpos: &mut Vector,
     ) -> Result<()> {
-        let mut tmpv: Vector = Vector::zero();
         let subp = *self.cells[p].sorq.subp();
-        subp.iter().try_for_each(|sub| {
+        // Pass 1: recursive subtree build + update flags. Scalar, in subnode
+        // order, because `hackcofm` is a side effect that must complete before a
+        // cell subnode's center of mass is readable.
+        for sub in subp.iter() {
             if sub.is_none() {
-                return Ok(());
+                continue;
             }
             self.subnhist[lev] += 1;
             if sub.is_cell() {
-                let cid = sub.index();
-                self.hackcofm(cid, psize / 2.0, lev + 1)?;
+                self.hackcofm(sub.index(), psize / 2.0, lev + 1)?;
             }
             let qnode = *self.node(*sub);
             self.cells[p].cellnode.update |= qnode.update;
-            self.cells[p].cellnode.mass += qnode.mass;
-            for k in 0..NDIM {
-                tmpv[k] = qnode.pos[k] * qnode.mass;
-                cmpos[k] += tmpv[k];
+        }
+        // Pass 2: center-of-mass + mass accumulation. This is a reduction over
+        // the (fixed, NSUB=8) subnodes; vectorize the per-subnode `pos*mass` map
+        // and fold back in subnode order. `None` subnodes carry mass/pos = 0, so
+        // they contribute exactly 0 (bit-identical to the scalar skip).
+        #[cfg(feature = "simd")]
+        {
+            const L: usize = SIMD_LANES;
+            type F = f32x8;
+            let mut mass = [0.0f32; L];
+            let mut px = [0.0f32; L];
+            let mut py = [0.0f32; L];
+            let mut pz = [0.0f32; L];
+            for i in 0..NSUB {
+                let sub = subp[i];
+                if !sub.is_none() {
+                    let q = *self.node(sub);
+                    mass[i] = q.mass;
+                    px[i] = q.pos[0];
+                    py[i] = q.pos[1];
+                    pz[i] = q.pos[2];
+                }
             }
-            Ok(())
-        })?;
+            let mv = F::from(mass);
+            let tx = (F::from(px) * mv).to_array();
+            let ty = (F::from(py) * mv).to_array();
+            let tz = (F::from(pz) * mv).to_array();
+            let ma = mv.to_array();
+            for i in 0..NSUB {
+                cmpos[0] += tx[i];
+                cmpos[1] += ty[i];
+                cmpos[2] += tz[i];
+                self.cells[p].cellnode.mass += ma[i];
+            }
+        }
+        #[cfg(not(feature = "simd"))]
+        {
+            let mut tmpv: Vector = Vector::zero();
+            for sub in subp.iter() {
+                if sub.is_none() {
+                    continue;
+                }
+                let qnode = *self.node(*sub);
+                self.cells[p].cellnode.mass += qnode.mass;
+                for k in 0..NDIM {
+                    tmpv[k] = qnode.pos[k] * qnode.mass;
+                    cmpos[k] += tmpv[k];
+                }
+            }
+        }
         Ok(())
     }
 
@@ -294,6 +347,7 @@ impl Tree {
         self.cells[p].rcrit2 = rcrit2;
     }
 
+    #[cfg(not(feature = "simd"))]
     fn displacement(&self, q: NodeRef, p: CellId) -> Vector {
         let mut dr: Vector = Vector::zero();
         for k in 0..NDIM {
@@ -302,6 +356,7 @@ impl Tree {
         dr
     }
 
+    #[cfg(not(feature = "simd"))]
     fn quadrupole_tensor(&self, q: NodeRef, dr: &Vector) -> Matrix {
         let drsq = dot_product(dr);
         let mut tmpm: Matrix = Matrix::zero();
@@ -350,20 +405,112 @@ impl Tree {
         let mut desc: [NodeRef; NSUB] = [NodeRef::None; NSUB];
         let ndesc = self.collect_descendants(p, &mut desc);
         matrix_zero(self.cells[p].sorq.quad_mut());
-        desc[..ndesc].iter().try_for_each(|d| {
-            let q = *d;
-            if q.is_none() {
-                return Err(TreeError::TreeStructure);
+        #[cfg(feature = "simd")]
+        {
+            // Pass 1: recurse cell descendants to finalize their moments.
+            for d in desc[..ndesc].iter() {
+                if d.is_none() {
+                    return Err(TreeError::TreeStructure);
+                }
+                if d.is_cell() {
+                    self.hackquad(d.index())?;
+                }
             }
-            if q.is_cell() {
-                self.hackquad(q.index())?;
+            // Pass 2: vectorize the per-descendant 3x3 quadrupole contribution
+            // and fold back in descendant order. `ndesc <= NSUB == SIMD_LANES`,
+            // so a single chunk suffices; lanes beyond `ndesc` are zero and
+            // skipped, contributing exactly nothing.
+            const L: usize = SIMD_LANES;
+            type F = f32x8;
+            let cpos = self.cells[p].cellnode.pos;
+            let mut mass = [0.0f32; L];
+            let mut drx = [0.0f32; L];
+            let mut dry = [0.0f32; L];
+            let mut drz = [0.0f32; L];
+            let mut cq00 = [0.0f32; L];
+            let mut cq01 = [0.0f32; L];
+            let mut cq02 = [0.0f32; L];
+            let mut cq10 = [0.0f32; L];
+            let mut cq11 = [0.0f32; L];
+            let mut cq12 = [0.0f32; L];
+            let mut cq20 = [0.0f32; L];
+            let mut cq21 = [0.0f32; L];
+            let mut cq22 = [0.0f32; L];
+            for i in 0..ndesc {
+                let q = desc[i];
+                let qn = *self.node(q);
+                mass[i] = qn.mass;
+                drx[i] = qn.pos[0] - cpos[0];
+                dry[i] = qn.pos[1] - cpos[1];
+                drz[i] = qn.pos[2] - cpos[2];
+                if q.is_cell() {
+                    let cq = self.cells[q.index()].sorq.quad();
+                    cq00[i] = cq[0][0];
+                    cq01[i] = cq[0][1];
+                    cq02[i] = cq[0][2];
+                    cq10[i] = cq[1][0];
+                    cq11[i] = cq[1][1];
+                    cq12[i] = cq[1][2];
+                    cq20[i] = cq[2][0];
+                    cq21[i] = cq[2][1];
+                    cq22[i] = cq[2][2];
+                }
             }
-            self.accumulate_moment(p, q);
-            Ok(())
-        })?;
+            let mv = F::from(mass);
+            let dx = F::from(drx);
+            let dy = F::from(dry);
+            let dz = F::from(drz);
+            let three = F::splat(3.0);
+            let drsq = dx * dx + dy * dy + dz * dz;
+            let t00 = (three * dx * dx - drsq) * mv + F::from(cq00);
+            let t01 = (three * dx * dy) * mv + F::from(cq01);
+            let t02 = (three * dx * dz) * mv + F::from(cq02);
+            let t10 = (three * dy * dx) * mv + F::from(cq10);
+            let t11 = (three * dy * dy - drsq) * mv + F::from(cq11);
+            let t12 = (three * dy * dz) * mv + F::from(cq12);
+            let t20 = (three * dz * dx) * mv + F::from(cq20);
+            let t21 = (three * dz * dy) * mv + F::from(cq21);
+            let t22 = (three * dz * dz - drsq) * mv + F::from(cq22);
+            let qmut = self.cells[p].sorq.quad_mut();
+            let a00 = t00.to_array();
+            let a01 = t01.to_array();
+            let a02 = t02.to_array();
+            let a10 = t10.to_array();
+            let a11 = t11.to_array();
+            let a12 = t12.to_array();
+            let a20 = t20.to_array();
+            let a21 = t21.to_array();
+            let a22 = t22.to_array();
+            for i in 0..ndesc {
+                (*qmut)[0][0] += a00[i];
+                (*qmut)[0][1] += a01[i];
+                (*qmut)[0][2] += a02[i];
+                (*qmut)[1][0] += a10[i];
+                (*qmut)[1][1] += a11[i];
+                (*qmut)[1][2] += a12[i];
+                (*qmut)[2][0] += a20[i];
+                (*qmut)[2][1] += a21[i];
+                (*qmut)[2][2] += a22[i];
+            }
+        }
+        #[cfg(not(feature = "simd"))]
+        {
+            desc[..ndesc].iter().try_for_each(|d| {
+                let q = *d;
+                if q.is_none() {
+                    return Err(TreeError::TreeStructure);
+                }
+                if q.is_cell() {
+                    self.hackquad(q.index())?;
+                }
+                self.accumulate_moment(p, q);
+                Ok(())
+            })?;
+        }
         Ok(())
     }
 
+    #[cfg(not(feature = "simd"))]
     fn accumulate_moment(&mut self, p: CellId, q: NodeRef) {
         let dr = self.displacement(q, p);
         let mut tmpm = self.quadrupole_tensor(q, &dr);

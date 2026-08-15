@@ -15,15 +15,15 @@ fn parse_energy_lines(output: &str) -> Vec<(f64, f64, f64, f64)> {
         if lines[i].contains("time") && lines[i].contains("|T+U|") && i + 1 < lines.len() {
             let data_line = lines[i + 1];
             let parts: Vec<&str> = data_line.split_whitespace().collect();
-            if parts.len() >= 6 {
-                if let (Ok(time), Ok(t_plus_u), Ok(t), Ok(neg_u)) = (
+            if parts.len() >= 6
+                && let (Ok(time), Ok(t_plus_u), Ok(t), Ok(neg_u)) = (
                     parts[0].parse::<f64>(),
                     parts[1].parse::<f64>(),
                     parts[2].parse::<f64>(),
                     parts[3].parse::<f64>(),
-                ) {
-                    energies.push((time, t_plus_u, t, neg_u));
-                }
+                )
+            {
+                energies.push((time, t_plus_u, t, neg_u));
             }
         }
     }
@@ -42,8 +42,8 @@ fn parse_diagnostics(output: &str) -> Vec<(f64, f64, f64, f64)> {
         if lines[i].contains("time") && lines[i].contains("|T+U|") && i + 1 < lines.len() {
             let data_line = lines[i + 1];
             let parts: Vec<&str> = data_line.split_whitespace().collect();
-            if parts.len() >= 8 {
-                if let (Ok(_time), Ok(_e), Ok(_t), Ok(_u), Ok(_tou), Ok(vcom), Ok(jtot), Ok(_cpu)) = (
+            if parts.len() >= 8
+                && let (Ok(_time), Ok(_e), Ok(_t), Ok(_u), Ok(_tou), Ok(vcom), Ok(jtot), Ok(_cpu)) = (
                     parts[0].parse::<f64>(),
                     parts[1].parse::<f64>(),
                     parts[2].parse::<f64>(),
@@ -52,9 +52,9 @@ fn parse_diagnostics(output: &str) -> Vec<(f64, f64, f64, f64)> {
                     parts[5].parse::<f64>(),
                     parts[6].parse::<f64>(),
                     parts[7].parse::<f64>(),
-                ) {
-                    result.push((vcom, jtot, 0.0, 0.0));
-                }
+                )
+            {
+                result.push((vcom, jtot, 0.0, 0.0));
             }
         }
     }
@@ -117,14 +117,14 @@ fn test_tree_depth_reasonable() {
             continue;
         }
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 3 {
-            if let Ok(depth) = parts[1].parse::<i32>() {
-                assert!(
-                    (2..=32).contains(&depth),
-                    "Tree depth out of range: {}",
-                    depth
-                );
-            }
+        if parts.len() >= 3
+            && let Ok(depth) = parts[1].parse::<i32>()
+        {
+            assert!(
+                (2..=32).contains(&depth),
+                "Tree depth out of range: {}",
+                depth
+            );
         }
     }
 }

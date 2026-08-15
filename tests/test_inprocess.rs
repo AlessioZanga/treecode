@@ -182,15 +182,15 @@ fn parse_energy_lines(output: &str) -> Vec<(f64, f64, f64, f64)> {
         if lines[i].contains("time") && lines[i].contains("|T+U|") && i + 1 < lines.len() {
             let data_line = lines[i + 1];
             let parts: Vec<&str> = data_line.split_whitespace().collect();
-            if parts.len() >= 6 {
-                if let (Ok(time), Ok(t_plus_u), Ok(t), Ok(neg_u)) = (
+            if parts.len() >= 6
+                && let (Ok(time), Ok(t_plus_u), Ok(t), Ok(neg_u)) = (
                     parts[0].parse::<f64>(),
                     parts[1].parse::<f64>(),
                     parts[2].parse::<f64>(),
                     parts[3].parse::<f64>(),
-                ) {
-                    energies.push((time, t_plus_u, t, neg_u));
-                }
+                )
+            {
+                energies.push((time, t_plus_u, t, neg_u));
             }
         }
     }
@@ -204,8 +204,8 @@ fn parse_diagnostics(output: &str) -> Vec<(f64, f64)> {
         if lines[i].contains("time") && lines[i].contains("|T+U|") && i + 1 < lines.len() {
             let data_line = lines[i + 1];
             let parts: Vec<&str> = data_line.split_whitespace().collect();
-            if parts.len() >= 8 {
-                if let (Ok(_t), Ok(_e), Ok(_x), Ok(_y), Ok(_z), Ok(vcom), Ok(jtot)) = (
+            if parts.len() >= 8
+                && let (Ok(_t), Ok(_e), Ok(_x), Ok(_y), Ok(_z), Ok(vcom), Ok(jtot)) = (
                     parts[0].parse::<f64>(),
                     parts[1].parse::<f64>(),
                     parts[2].parse::<f64>(),
@@ -213,9 +213,9 @@ fn parse_diagnostics(output: &str) -> Vec<(f64, f64)> {
                     parts[4].parse::<f64>(),
                     parts[5].parse::<f64>(),
                     parts[6].parse::<f64>(),
-                ) {
-                    result.push((vcom, jtot));
-                }
+                )
+            {
+                result.push((vcom, jtot));
             }
         }
     }

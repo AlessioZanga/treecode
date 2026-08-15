@@ -1,8 +1,14 @@
+#[cfg(feature = "simd")]
+use wide::f32x8;
+
 use crate::{
     error::{Result, TreeError},
     getparam, rng,
     types::{BODY, Body, Cell, CellId, Matrix, NDIM, Vector, scanopt},
 };
+
+#[cfg(feature = "simd")]
+const SIMD_LANES: usize = 8;
 
 pub const MAXLEVEL: usize = 32;
 
@@ -151,23 +157,123 @@ impl Tree {
         // results.
         let half_dt = self.half_dt;
 
-        self.bodytab.iter_mut().for_each(|p| {
-            for k in 0..NDIM {
-                p.vel[k] += p.acc[k] * half_dt;
-                p.bodynode.pos[k] += p.vel[k] * self.dtime;
-            }
-        });
+        #[cfg(feature = "simd")]
+        {
+            self.step_bodies_simd(half_dt, true)?;
+        }
+        #[cfg(not(feature = "simd"))]
+        {
+            self.bodytab.iter_mut().for_each(|p| {
+                for k in 0..NDIM {
+                    p.vel[k] += p.acc[k] * half_dt;
+                    p.bodynode.pos[k] += p.vel[k] * self.dtime;
+                }
+            });
+        }
 
         self.treeforce()?;
 
-        self.bodytab.iter_mut().for_each(|p| {
-            for k in 0..NDIM {
-                p.vel[k] += p.acc[k] * half_dt;
-            }
-        });
+        #[cfg(feature = "simd")]
+        {
+            self.step_bodies_simd(half_dt, false)?;
+        }
+        #[cfg(not(feature = "simd"))]
+        {
+            self.bodytab.iter_mut().for_each(|p| {
+                for k in 0..NDIM {
+                    p.vel[k] += p.acc[k] * half_dt;
+                }
+            });
+        }
 
         self.nstep += 1;
         self.tnow += self.dtime;
+        Ok(())
+    }
+
+    /// SIMD leapfrog update over `bodytab`. Every body is independent (the kick
+    /// and drift only read/write that body's own `vel`/`acc`/`pos`), so the work
+    /// is a pure *map* across bodies: there is no cross-body reduction to
+    /// reorder, and lane order is therefore irrelevant to byte-exactness. When
+    /// `drift` is true the position update uses the freshly-kicked velocity,
+    /// matching the scalar `stepsystem` order (kick then drift, per component).
+    #[cfg(feature = "simd")]
+    fn step_bodies_simd(&mut self, half_dt: f32, drift: bool) -> Result<()> {
+        const L: usize = SIMD_LANES;
+        type F = f32x8;
+        let hdt = F::splat(half_dt);
+        let dt = F::splat(self.dtime);
+        let n = self.bodytab.len();
+        let mut i = 0;
+        while i + L <= n {
+            let mut vx = [0.0f32; L];
+            let mut vy = [0.0f32; L];
+            let mut vz = [0.0f32; L];
+            let mut ax = [0.0f32; L];
+            let mut ay = [0.0f32; L];
+            let mut az = [0.0f32; L];
+            let mut px = [0.0f32; L];
+            let mut py = [0.0f32; L];
+            let mut pz = [0.0f32; L];
+            for b in 0..L {
+                let p = &self.bodytab[i + b];
+                vx[b] = p.vel[0];
+                vy[b] = p.vel[1];
+                vz[b] = p.vel[2];
+                ax[b] = p.acc[0];
+                ay[b] = p.acc[1];
+                az[b] = p.acc[2];
+                px[b] = p.bodynode.pos[0];
+                py[b] = p.bodynode.pos[1];
+                pz[b] = p.bodynode.pos[2];
+            }
+            let vxw = F::from(vx);
+            let vyw = F::from(vy);
+            let vzw = F::from(vz);
+            let axw = F::from(ax);
+            let ayw = F::from(ay);
+            let azw = F::from(az);
+            let pxw = F::from(px);
+            let pyw = F::from(py);
+            let pzw = F::from(pz);
+            let nvx = vxw + axw * hdt;
+            let nvy = vyw + ayw * hdt;
+            let nvz = vzw + azw * hdt;
+            let na = nvx.to_array();
+            let nb = nvy.to_array();
+            let nc = nvz.to_array();
+            if drift {
+                let npa = (pxw + nvx * dt).to_array();
+                let npb = (pyw + nvy * dt).to_array();
+                let npc = (pzw + nvz * dt).to_array();
+                for b in 0..L {
+                    let p = &mut self.bodytab[i + b];
+                    p.vel[0] = na[b];
+                    p.vel[1] = nb[b];
+                    p.vel[2] = nc[b];
+                    p.bodynode.pos[0] = npa[b];
+                    p.bodynode.pos[1] = npb[b];
+                    p.bodynode.pos[2] = npc[b];
+                }
+            } else {
+                for b in 0..L {
+                    let p = &mut self.bodytab[i + b];
+                    p.vel[0] = na[b];
+                    p.vel[1] = nb[b];
+                    p.vel[2] = nc[b];
+                }
+            }
+            i += L;
+        }
+        // Scalar remainder: identical per-body math, list order preserved.
+        for p in self.bodytab[i..].iter_mut() {
+            for k in 0..NDIM {
+                p.vel[k] += p.acc[k] * half_dt;
+                if drift {
+                    p.bodynode.pos[k] += p.vel[k] * self.dtime;
+                }
+            }
+        }
         Ok(())
     }
 
