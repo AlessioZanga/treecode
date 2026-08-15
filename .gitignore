@@ -60,3 +60,6 @@ dkms.conf
 
 # List of todo items.
 TODO.md
+
+# Simulations
+*.txt

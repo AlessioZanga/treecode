@@ -1,4 +1,7 @@
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::{
+    fmt::Write as _,
+    io::{BufReader, BufWriter, Read, Write},
+};
 
 use crate::{
     error::{Result, TreeError},
@@ -8,8 +11,6 @@ use crate::{
     vecmath::{matrix_zero, vector_zero},
 };
 
-const E_WIDTH: usize = 14;
-
 fn getargv0(config: &getparam::Config) -> Result<String> {
     config.getparam("argv0")
 }
@@ -18,13 +19,20 @@ fn getversion(config: &getparam::Config) -> Result<String> {
     config.getparam("VERSION")
 }
 
+const E_WIDTH: usize = 14;
+
+/// Format a float the way the C reference does with `"%14.7E"`: a 14-wide
+/// right-justified field whose exponent is always two digits with an explicit
+/// sign (`E+00`/`E-05`). Rust's `{:>14.7E}` omits the sign and zero-pad for a
+/// zero exponent (`E0`), so the exponent must be re-emitted explicitly to stay
+/// byte-identical to the C output.
 fn fmt_e14(v: Real) -> String {
     let s = format!("{:.7E}", v);
     let (mant, exp) = s.split_once('E').unwrap_or((&s, "0"));
     let exp: i32 = exp.parse().unwrap_or(0);
     let sign = if exp < 0 { '-' } else { '+' };
     let body = format!("{}E{}{:02}", mant, sign, exp.abs());
-    let mut out = String::new();
+    let mut out = String::with_capacity(E_WIDTH);
     for _ in 0..E_WIDTH.saturating_sub(body.len()) {
         out.push(' ');
     }
@@ -45,20 +53,15 @@ fn parse_f64(toks: &[String], i: &mut usize) -> Result<f64> {
 }
 
 fn out_int(f: &mut impl Write, v: i32) -> Result<()> {
-    let line = format!(" {}\n", v);
-    f.write_all(line.as_bytes())
-        .map_err(|_| TreeError::WriteFailed)
+    writeln!(f, " {}", v).map_err(|_| TreeError::WriteFailed)
 }
 
 fn out_real(f: &mut impl Write, v: Real) -> Result<()> {
-    let line = format!(" {}\n", fmt_e14(v));
-    f.write_all(line.as_bytes())
-        .map_err(|_| TreeError::WriteFailed)
+    writeln!(f, " {}", fmt_e14(v)).map_err(|_| TreeError::WriteFailed)
 }
 
 fn out_vector(f: &mut impl Write, v: Vector) -> Result<()> {
-    let line = format!(" {} {} {}\n", fmt_e14(v[0]), fmt_e14(v[1]), fmt_e14(v[2]));
-    f.write_all(line.as_bytes())
+    writeln!(f, " {} {} {}", fmt_e14(v[0]), fmt_e14(v[1]), fmt_e14(v[2]))
         .map_err(|_| TreeError::WriteFailed)
 }
 
@@ -160,21 +163,26 @@ impl Tree {
     }
 
     pub fn startoutput(&self) -> Result<()> {
-        let headline_str = self.headline.clone();
-        println!("\n{}", headline_str);
         let use_quad_str = if self.usequad != 0 { "true" } else { "false" };
-        println!(
+        let opts = self.options.clone();
+        let mut s = String::new();
+        writeln!(s, "\n{}", self.headline).map_err(|_| TreeError::WriteFailed)?;
+        writeln!(
+            s,
             "\n{:>8}{:>10}{:>10}{:>10}{:>10}{:>10}{:>10}",
             "nbody", "dtime", "eps", "theta", "usequad", "dtout", "tstop"
-        );
-        println!(
+        )
+        .map_err(|_| TreeError::WriteFailed)?;
+        writeln!(
+            s,
             "{:8}{:10.5}{:10.4}{:10.2}{:>10}{:10.5}{:10.4}",
             self.nbody, self.dtime, self.eps, self.theta, use_quad_str, self.dtout, self.tstop
-        );
-        let opts = self.options.clone();
+        )
+        .map_err(|_| TreeError::WriteFailed)?;
         if !opts.is_empty() {
-            println!("\n\toptions: {}", opts);
+            writeln!(s, "\n\toptions: {}", opts).map_err(|_| TreeError::WriteFailed)?;
         }
+        print!("{s}");
         let save_str = self.savefile.clone();
         if !save_str.is_empty() {
             self.savestate(&save_str)?;
@@ -184,14 +192,18 @@ impl Tree {
 
     pub fn forcereport(&self) {
         let ftree = (self.nbody + self.ncell - 1) as f32 / self.ncell as f32;
-        println!(
+        let mut s = String::new();
+        let _ = writeln!(
+            s,
             "\n\t{:>8}{:>8}{:>8}{:>8}{:>10}{:>10}{:>8}",
             "rsize", "tdepth", "ftree", "actmax", "nbbtot", "nbctot", "CPUfc"
         );
-        println!(
+        let _ = writeln!(
+            s,
             "\t{:8.1}{:8}{:8.3}{:8}{:10}{:10}{:8.3}",
             self.rsize, self.tdepth, ftree, self.actmax, self.nbbcalc, self.nbccalc, self.cpuforce
         );
+        print!("{s}");
     }
 
     pub fn output(&mut self) -> Result<()> {
@@ -208,11 +220,15 @@ impl Tree {
         }
         amabs = amabs.sqrt();
 
-        println!(
+        let mut s = String::new();
+        writeln!(
+            s,
             "\n    {:>8}{:>8}{:>8}{:>8}{:>8}{:>8}{:>8}{:>8}",
             "time", "|T+U|", "T", "-U", "-T/U", "|Vcom|", "|Jtot|", "CPUtot"
-        );
-        println!(
+        )
+        .map_err(|_| TreeError::WriteFailed)?;
+        writeln!(
+            s,
             "    {:8.3}{:8.5}{:8.5}{:8.5}{:8.5}{:8.5}{:8.5}{:8.3}",
             self.tnow,
             self.etot[0].abs(),
@@ -222,7 +238,9 @@ impl Tree {
             cmabs,
             amabs,
             crate::types::cputime()?
-        );
+        )
+        .map_err(|_| TreeError::WriteFailed)?;
+        print!("{s}");
 
         let teff = self.tnow + self.dtime / 8.0;
         let out_str = self.outfile.clone();

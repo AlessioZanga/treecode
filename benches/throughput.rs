@@ -13,7 +13,7 @@ use std::{path::Path, process::Command, time::Instant};
 use treecode::Simulation;
 
 fn main() {
-    let params = ["nbody=1500", "tstop=0.05", "dtout=0.025", "seed=123"];
+    let params = ["nbody=4096", "tstop=10.0", "dtout=0.025", "seed=123"];
     let iters = 3;
 
     // Warm up (also verifies the simulation runs end-to-end).
