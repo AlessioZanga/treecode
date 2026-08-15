@@ -2,7 +2,9 @@ use crate::{
     error::{Result, TreeError},
     mathfns,
     treecode::{MAXLEVEL, Tree},
-    types::{BodyId, CELL, Cell, CellId, NDIM, NSUB, Node, NodeRef, Real, Sorq, Vector, cputime},
+    types::{
+        BodyId, CELL, Cell, CellId, NDIM, NSUB, Node, NodeRef, Sorq, Vector, cputime, scanopt,
+    },
     vecmath::{Matrix, matrix_zero, vector_zero},
 };
 
@@ -18,7 +20,7 @@ fn set_center_of_mass(p: &Cell, cmpos: &mut Vector) {
     }
 }
 
-fn verify_center(p: &Cell, cmpos: &Vector, psize: Real) -> Result<()> {
+fn verify_center(p: &Cell, cmpos: &Vector, psize: f32) -> Result<()> {
     for k in 0..NDIM {
         if cmpos[k] < p.cellnode.pos[k] - psize / 2.0 || p.cellnode.pos[k] + psize / 2.0 <= cmpos[k]
         {
@@ -28,25 +30,25 @@ fn verify_center(p: &Cell, cmpos: &Vector, psize: Real) -> Result<()> {
     Ok(())
 }
 
-fn compute_rcrit_exact(rsize: Real) -> Real {
+fn compute_rcrit_exact(rsize: f32) -> f32 {
     mathfns::rsqr(2.0 * rsize)
 }
 
-fn compute_rcrit_sw94(cmpos: &Vector, psize: Real, theta: Real, p: &Cell) -> Real {
-    let mut bmax2: Real = 0.0;
+fn compute_rcrit_sw94(cmpos: &Vector, psize: f32, theta2: f32, p: &Cell) -> f32 {
+    let mut bmax2: f32 = 0.0;
     for k in 0..NDIM {
         let d = cmpos[k] - p.cellnode.pos[k] + psize / 2.0;
         bmax2 += mathfns::rsqr(d.max(psize - d));
     }
-    bmax2 / mathfns::rsqr(theta)
+    bmax2 / theta2
 }
 
-fn compute_rcrit_bh86(psize: Real, theta: Real) -> Real {
+fn compute_rcrit_bh86(psize: f32, theta: f32) -> f32 {
     mathfns::rsqr(psize / theta)
 }
 
-fn compute_rcrit_default(cmpos: &Vector, psize: Real, theta: Real, p: &Cell) -> Real {
-    let mut d: Real = 0.0;
+fn compute_rcrit_default(cmpos: &Vector, psize: f32, theta: f32, p: &Cell) -> f32 {
+    let mut d: f32 = 0.0;
     for k in 0..NDIM {
         let dk = cmpos[k] - p.cellnode.pos[k];
         d += dk * dk;
@@ -54,8 +56,8 @@ fn compute_rcrit_default(cmpos: &Vector, psize: Real, theta: Real, p: &Cell) -> 
     mathfns::rsqr(psize / theta + d.sqrt())
 }
 
-fn dot_product(dr: &Vector) -> Real {
-    let mut drsq: Real = 0.0;
+fn dot_product(dr: &Vector) -> f32 {
+    let mut drsq: f32 = 0.0;
     for k in 0..NDIM {
         drsq += dr[k] * dr[k];
     }
@@ -67,6 +69,7 @@ impl Tree {
         match r {
             NodeRef::Body(b) => &self.bodytab[b].bodynode,
             NodeRef::Cell(c) => &self.cells[c].cellnode,
+            NodeRef::None => unreachable!("node() called on NodeRef::None"),
         }
     }
 
@@ -74,38 +77,39 @@ impl Tree {
         match r {
             NodeRef::Body(b) => &mut self.bodytab[b].bodynode,
             NodeRef::Cell(c) => &mut self.cells[c].cellnode,
+            NodeRef::None => unreachable!("node_mut() called on NodeRef::None"),
         }
     }
 
-    pub fn maketree(&mut self, nbody: i32) -> Result<()> {
+    pub fn maketree(&mut self, nbody: usize) -> Result<()> {
         let cpustart = cputime()?;
         self.newtree();
         let root = self.makecell()?;
         self.root = Some(root);
         vector_zero(&mut self.cells[root].cellnode.pos);
-        self.expandbox(nbody)?;
+        self.expandbox()?;
         self.load_all_bodies(nbody)?;
         self.parse_options()?;
         self.reset_stats();
         self.hackcofm(root, self.rsize, 0)?;
-        self.threadtree(NodeRef::Cell(root), None)?;
+        self.threadtree(NodeRef::Cell(root), NodeRef::None)?;
         if self.usequad != 0 {
             self.hackquad(root)?;
         }
-        self.cputree = (cputime()? - cpustart) as Real;
+        self.cputree = (cputime()? - cpustart) as f32;
         Ok(())
     }
 
-    fn load_all_bodies(&mut self, nbody: i32) -> Result<()> {
-        for i in 0..nbody as usize {
+    fn load_all_bodies(&mut self, nbody: usize) -> Result<()> {
+        for i in 0..nbody {
             self.loadbody(i)?;
         }
         Ok(())
     }
 
     fn parse_options(&mut self) -> Result<()> {
-        self.bh86 = crate::types::scanopt(&self.options, "bh86");
-        self.sw94 = crate::types::scanopt(&self.options, "sw94");
+        self.bh86 = scanopt(&self.options, "bh86");
+        self.sw94 = scanopt(&self.options, "sw94");
         if self.bh86 && self.sw94 {
             return Err(TreeError::IncompatibleOptions);
         }
@@ -122,17 +126,14 @@ impl Tree {
 
     fn newtree(&mut self) {
         if !self.firstcall {
-            let mut p: Option<NodeRef> = self.root.map(NodeRef::Cell);
-            while let Some(pr) = p {
-                if self.node(pr).node_type == CELL {
-                    let cid = match pr {
-                        NodeRef::Cell(c) => c,
-                        _ => unreachable!(),
-                    };
+            let mut p: NodeRef = self.root.map(NodeRef::Cell).unwrap_or(NodeRef::None);
+            while !p.is_none() {
+                if self.node(p).node_type == CELL {
+                    let cid = p.index();
                     self.freecell.push(cid);
                     p = self.cells[cid].more;
                 } else {
-                    p = self.node(pr).next;
+                    p = self.node(p).next;
                 }
             }
         } else {
@@ -151,17 +152,16 @@ impl Tree {
         };
         self.cells[id].cellnode.node_type = CELL;
         self.cells[id].cellnode.update = 0;
-        self.cells[id].more = None;
+        self.cells[id].more = NodeRef::None;
         self.cells[id].sorq = Sorq::default();
         self.ncell += 1;
         Ok(id)
     }
 
-    fn expandbox(&mut self, nbody: i32) -> Result<()> {
+    fn expandbox(&mut self) -> Result<()> {
         let root = self.root.ok_or(TreeError::TreeStructure)?;
-        let mut dmax: Real = 0.0;
-        for i in 0..nbody as usize {
-            let p = &self.bodytab[i];
+        let mut dmax: f32 = 0.0;
+        for p in &self.bodytab {
             for k in 0..NDIM {
                 let d = (p.bodynode.pos[k] - self.cells[root].cellnode.pos[k]).abs();
                 if d > dmax {
@@ -184,26 +184,27 @@ impl Tree {
             if cur.is_none() {
                 break;
             }
-            if let Some(NodeRef::Body(other)) = cur {
+            if !cur.is_cell() {
+                let other = cur.index();
                 self.require_distinct_positions(p, other)?;
                 let c = self.makecell()?;
                 self.set_cell_midpoint(c, q, p, qsize);
                 let sub = self.subindex(other, c);
-                self.cells[c].sorq.subp_mut()[sub] = Some(NodeRef::Body(other));
-                self.cells[q].sorq.subp_mut()[qind] = Some(NodeRef::Cell(c));
+                self.cells[c].sorq.subp_mut()[sub] = NodeRef::body(other);
+                self.cells[q].sorq.subp_mut()[qind] = NodeRef::cell(c);
                 q = c;
-            } else if let Some(NodeRef::Cell(c)) = cur {
-                q = c;
+            } else {
+                q = cur.index();
             }
             qind = self.subindex(p, q);
             qsize /= 2.0;
         }
-        self.cells[q].sorq.subp_mut()[qind] = Some(NodeRef::Body(p));
+        self.cells[q].sorq.subp_mut()[qind] = NodeRef::body(p);
         Ok(())
     }
 
     fn require_distinct_positions(&self, p: BodyId, other: BodyId) -> Result<()> {
-        let mut dist2: Real = 0.0;
+        let mut dist2: f32 = 0.0;
         for k in 0..NDIM {
             let d = self.bodytab[p].bodynode.pos[k] - self.bodytab[other].bodynode.pos[k];
             dist2 += d * d;
@@ -223,7 +224,7 @@ impl Tree {
         ind
     }
 
-    fn set_cell_midpoint(&mut self, c: CellId, q: CellId, p: BodyId, qsize: Real) {
+    fn set_cell_midpoint(&mut self, c: CellId, q: CellId, p: BodyId, qsize: f32) {
         for k in 0..NDIM {
             let pk = self.bodytab[p].bodynode.pos[k];
             let qk = self.cells[q].cellnode.pos[k];
@@ -232,10 +233,10 @@ impl Tree {
         }
     }
 
-    fn hackcofm(&mut self, p: CellId, psize: Real, lev: i32) -> Result<()> {
+    fn hackcofm(&mut self, p: CellId, psize: f32, lev: usize) -> Result<()> {
         let mut cmpos: Vector = Vector::zero();
         self.update_depth(lev);
-        self.cellhist[lev as usize] += 1;
+        self.cellhist[lev] += 1;
         self.cells[p].cellnode.mass = 0.0;
         self.accumulate_subnodes(p, psize, lev, &mut cmpos)?;
         set_center_of_mass(&self.cells[p], &mut cmpos);
@@ -247,7 +248,7 @@ impl Tree {
         Ok(())
     }
 
-    fn update_depth(&mut self, lev: i32) {
+    fn update_depth(&mut self, lev: usize) {
         if lev > self.tdepth {
             self.tdepth = lev;
         }
@@ -256,35 +257,37 @@ impl Tree {
     fn accumulate_subnodes(
         &mut self,
         p: CellId,
-        psize: Real,
-        lev: i32,
+        psize: f32,
+        lev: usize,
         cmpos: &mut Vector,
     ) -> Result<()> {
         let mut tmpv: Vector = Vector::zero();
         let subp = *self.cells[p].sorq.subp();
         for sub in &subp {
-            if let Some(q) = *sub {
-                self.subnhist[lev as usize] += 1;
-                if let NodeRef::Cell(cid) = q {
-                    self.hackcofm(cid, psize / 2.0, lev + 1)?;
-                }
-                let qnode = *self.node(q);
-                self.cells[p].cellnode.update |= qnode.update;
-                self.cells[p].cellnode.mass += qnode.mass;
-                for k in 0..NDIM {
-                    tmpv[k] = qnode.pos[k] * qnode.mass;
-                    cmpos[k] += tmpv[k];
-                }
+            if sub.is_none() {
+                continue;
+            }
+            self.subnhist[lev] += 1;
+            if sub.is_cell() {
+                let cid = sub.index();
+                self.hackcofm(cid, psize / 2.0, lev + 1)?;
+            }
+            let qnode = *self.node(*sub);
+            self.cells[p].cellnode.update |= qnode.update;
+            self.cells[p].cellnode.mass += qnode.mass;
+            for k in 0..NDIM {
+                tmpv[k] = qnode.pos[k] * qnode.mass;
+                cmpos[k] += tmpv[k];
             }
         }
         Ok(())
     }
 
-    fn setrcrit(&mut self, p: CellId, cmpos: &Vector, psize: Real) {
+    fn setrcrit(&mut self, p: CellId, cmpos: &Vector, psize: f32) {
         let rcrit2 = if self.theta == 0.0 {
             compute_rcrit_exact(self.rsize)
         } else if self.sw94 {
-            compute_rcrit_sw94(cmpos, psize, self.theta, &self.cells[p])
+            compute_rcrit_sw94(cmpos, psize, self.theta2, &self.cells[p])
         } else if self.bh86 {
             compute_rcrit_bh86(psize, self.theta)
         } else {
@@ -313,29 +316,32 @@ impl Tree {
         tmpm
     }
 
-    fn collect_descendants(&self, c: CellId, desc: &mut [Option<NodeRef>]) -> usize {
+    fn collect_descendants(&self, c: CellId, desc: &mut [NodeRef]) -> usize {
         let mut ndesc: usize = 0;
         let subp = self.cells[c].sorq.subp();
-        for s in subp.iter().flatten() {
-            desc[ndesc] = Some(*s);
+        for s in subp.iter() {
+            if s.is_none() {
+                continue;
+            }
+            desc[ndesc] = *s;
             ndesc += 1;
         }
         ndesc
     }
 
-    fn threadtree(&mut self, p: NodeRef, n: Option<NodeRef>) -> Result<()> {
+    fn threadtree(&mut self, p: NodeRef, n: NodeRef) -> Result<()> {
         self.node_mut(p).next = n;
         if self.node(p).node_type == CELL {
-            let cid = match p {
-                NodeRef::Cell(c) => c,
-                _ => unreachable!(),
-            };
-            let mut desc: [Option<NodeRef>; NSUB + 1] = [None; NSUB + 1];
+            let cid = p.index();
+            let mut desc: [NodeRef; NSUB + 1] = [NodeRef::None; NSUB + 1];
             let ndesc = self.collect_descendants(cid, &mut desc);
             self.cells[cid].more = desc[0];
             desc[ndesc] = n;
             for i in 0..ndesc {
-                let child = desc[i].ok_or(TreeError::TreeStructure)?;
+                let child = desc[i];
+                if child.is_none() {
+                    return Err(TreeError::TreeStructure);
+                }
                 self.threadtree(child, desc[i + 1])?;
             }
         }
@@ -343,13 +349,16 @@ impl Tree {
     }
 
     fn hackquad(&mut self, p: CellId) -> Result<()> {
-        let mut desc: [Option<NodeRef>; NSUB] = [None; NSUB];
+        let mut desc: [NodeRef; NSUB] = [NodeRef::None; NSUB];
         let ndesc = self.collect_descendants(p, &mut desc);
         matrix_zero(self.cells[p].sorq.quad_mut());
         for d in &desc[..ndesc] {
-            let q = d.ok_or(TreeError::TreeStructure)?;
-            if let NodeRef::Cell(cid) = q {
-                self.hackquad(cid)?;
+            let q = *d;
+            if q.is_none() {
+                return Err(TreeError::TreeStructure);
+            }
+            if q.is_cell() {
+                self.hackquad(q.index())?;
             }
             self.accumulate_moment(p, q);
         }
@@ -374,11 +383,11 @@ impl Tree {
         }
     }
 
-    pub fn tree_depth(&self) -> i32 {
+    pub fn tree_depth(&self) -> usize {
         self.tdepth
     }
 
-    pub fn cell_count(&self) -> i32 {
+    pub fn cell_count(&self) -> usize {
         self.ncell
     }
 

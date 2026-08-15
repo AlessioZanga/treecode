@@ -1,4 +1,4 @@
-use crate::types::{Real, Vector};
+use crate::types::Vector;
 
 /// Stateful PRNG handle. The C code relied on libc's process-global
 /// `random()`/`srandom()`. To drop that global (and the `libc` RNG dependency)
@@ -8,6 +8,7 @@ use crate::types::{Real, Vector};
 /// separation 3, seeded by the same LCG and warmed up with the same 310
 /// discarded draws. A single `unit()` therefore yields the exact same stream
 /// as the C `random()` on any platform.
+#[derive(Clone, Copy)]
 pub struct RngState {
     state: [i32; 32],
     fptr: usize,
@@ -91,11 +92,11 @@ pub fn grandom(state: &mut RngState, mean: f64, sdev: f64) -> f64 {
     }
 }
 
-pub fn pickshell(state: &mut RngState, vec: &mut Vector, ndim: usize, rad: Real) {
+pub fn pickshell(state: &mut RngState, vec: &mut Vector, ndim: usize, rad: f32) {
     loop {
-        let mut rsq: Real = 0.0;
+        let mut rsq: f32 = 0.0;
         for v in vec.iter_mut().take(ndim) {
-            *v = xrandom(state, -1.0, 1.0) as Real;
+            *v = xrandom(state, -1.0, 1.0) as f32;
             rsq += *v * *v;
         }
         if rsq <= 1.0 {
@@ -108,11 +109,11 @@ pub fn pickshell(state: &mut RngState, vec: &mut Vector, ndim: usize, rad: Real)
     }
 }
 
-pub fn pickball(state: &mut RngState, vec: &mut Vector, ndim: usize, rad: Real) {
+pub fn pickball(state: &mut RngState, vec: &mut Vector, ndim: usize, rad: f32) {
     loop {
-        let mut rsq: Real = 0.0;
+        let mut rsq: f32 = 0.0;
         for v in vec.iter_mut().take(ndim) {
-            *v = xrandom(state, -1.0, 1.0) as Real;
+            *v = xrandom(state, -1.0, 1.0) as f32;
             rsq += *v * *v;
         }
         if rsq <= 1.0 {
@@ -124,8 +125,8 @@ pub fn pickball(state: &mut RngState, vec: &mut Vector, ndim: usize, rad: Real) 
     }
 }
 
-pub fn pickbox(state: &mut RngState, vec: &mut Vector, ndim: usize, size: Real) {
+pub fn pickbox(state: &mut RngState, vec: &mut Vector, ndim: usize, size: f32) {
     for v in vec.iter_mut().take(ndim) {
-        *v = xrandom(state, -(size as f64), size as f64) as Real;
+        *v = xrandom(state, -(size as f64), size as f64) as f32;
     }
 }

@@ -1,7 +1,7 @@
 use crate::{
     error::{Result, TreeError},
     getparam, rng,
-    types::{BODY, Body, Cell, CellId, Matrix, NDIM, Real, Vector},
+    types::{BODY, Body, Cell, CellId, Matrix, NDIM, Vector, scanopt},
 };
 
 pub const MAXLEVEL: usize = 32;
@@ -18,24 +18,31 @@ pub struct Tree {
     pub cells: Vec<Cell>,
 
     // scalar state
-    pub rsize: Real,
-    pub ncell: i32,
-    pub tdepth: i32,
-    pub cputree: Real,
-    pub theta: Real,
+    pub rsize: f32,
+    pub ncell: usize,
+    pub tdepth: usize,
+    pub cputree: f32,
+    pub theta: f32,
     pub usequad: u8,
-    pub eps: Real,
-    pub actmax: i32,
-    pub nbbcalc: i32,
-    pub nbccalc: i32,
-    pub cpuforce: Real,
-    pub dtime: Real,
-    pub dtout: Real,
-    pub tstop: Real,
-    pub tnow: Real,
-    pub tout: Real,
-    pub nstep: i32,
-    pub nbody: i32,
+    pub eps: f32,
+    pub actmax: usize,
+    pub nbbcalc: usize,
+    pub nbccalc: usize,
+    pub cpuforce: f32,
+    pub dtime: f32,
+    pub dtout: f32,
+    pub tstop: f32,
+    pub tnow: f32,
+    pub tout: f32,
+    pub nstep: usize,
+    pub nbody: usize,
+
+    // derived run-constant values, set by `refresh_derived`
+    pub inv_nbody: f64,
+    pub eps2: f32,
+    pub half_dt: f32,
+    pub theta_pow_m2_5: f32,
+    pub theta2: f32,
 
     // string state (was `*mut c_char`)
     pub options: String,
@@ -48,8 +55,8 @@ pub struct Tree {
     pub config: getparam::Config,
 
     // diagnostics
-    pub mtot: Real,
-    pub etot: [Real; 3],
+    pub mtot: f32,
+    pub etot: [f32; 3],
     pub keten: Matrix,
     pub peten: Matrix,
     pub cmpos: Vector,
@@ -61,11 +68,11 @@ pub struct Tree {
     pub firstcall: bool,
     pub bh86: bool,
     pub sw94: bool,
-    pub cellhist: [i32; MAXLEVEL],
-    pub subnhist: [i32; MAXLEVEL],
+    pub cellhist: [usize; MAXLEVEL],
+    pub subnhist: [usize; MAXLEVEL],
 
     // treegrav module state (was `static mut`)
-    pub actlen: i32,
+    pub actlen: usize,
 }
 
 impl Default for Tree {
@@ -98,6 +105,11 @@ impl Tree {
             tout: 0.0,
             nstep: 0,
             nbody: 0,
+            inv_nbody: 0.0,
+            eps2: 0.0,
+            half_dt: 0.0,
+            theta_pow_m2_5: 0.0,
+            theta2: 0.0,
             options: String::new(),
             infile: String::new(),
             outfile: String::new(),
@@ -122,9 +134,8 @@ impl Tree {
     }
 
     fn treeforce(&mut self) -> Result<()> {
-        let nb = self.nbody as usize;
-        for i in 0..nb {
-            self.bodytab[i].bodynode.update = 1;
+        for b in &mut self.bodytab {
+            b.bodynode.update = 1;
         }
         self.maketree(self.nbody)?;
         self.gravcalc()?;
@@ -133,22 +144,25 @@ impl Tree {
     }
 
     fn stepsystem(&mut self) -> Result<()> {
-        let nb = self.nbody as usize;
+        // `0.5 * dtime` is exact (multiplying by a power of two never rounds), so
+        // `acc * (0.5 * dtime)` == `(acc * 0.5) * dtime` bit-for-bit. It is
+        // precomputed once as `self.half_dt` in `refresh_derived`, turning the
+        // per-component kick from two `vmulss` into one, with identical f32
+        // results.
+        let half_dt = self.half_dt;
 
-        for i in 0..nb {
-            let p = &mut self.bodytab[i];
+        for p in &mut self.bodytab {
             for k in 0..NDIM {
-                p.vel[k] += p.acc[k] * 0.5 * self.dtime;
+                p.vel[k] += p.acc[k] * half_dt;
                 p.bodynode.pos[k] += p.vel[k] * self.dtime;
             }
         }
 
         self.treeforce()?;
 
-        for i in 0..nb {
-            let p = &mut self.bodytab[i];
+        for p in &mut self.bodytab {
             for k in 0..NDIM {
-                p.vel[k] += p.acc[k] * 0.5 * self.dtime;
+                p.vel[k] += p.acc[k] * half_dt;
             }
         }
 
@@ -169,39 +183,41 @@ impl Tree {
         let restore = self.config.getparam("restore")?;
 
         if restore.is_empty() {
-            self.eps = self.config.getdparam("eps")? as Real;
+            self.eps = self.config.getdparam("eps")? as f32;
 
             let dtime_str = self.config.getparam("dtime")?;
             self.dtime = if let Some((n, d)) = dtime_str.split_once('/') {
                 let n: f64 = n.parse().unwrap_or(0.0);
                 let d: f64 = d.parse().unwrap_or(1.0);
-                (n / d) as Real
+                (n / d) as f32
             } else {
-                self.config.getdparam("dtime")? as Real
+                self.config.getdparam("dtime")? as f32
             };
 
-            self.theta = self.config.getdparam("theta")? as Real;
+            self.theta = self.config.getdparam("theta")? as f32;
             self.usequad = self.config.getbparam("usequad")? as u8;
-            self.tstop = self.config.getdparam("tstop")? as Real;
+            self.tstop = self.config.getdparam("tstop")? as f32;
 
             let dtout_str = self.config.getparam("dtout")?;
             self.dtout = if let Some((n, d)) = dtout_str.split_once('/') {
                 let n: f64 = n.parse().unwrap_or(0.0);
                 let d: f64 = d.parse().unwrap_or(1.0);
-                (n / d) as Real
+                (n / d) as f32
             } else {
-                self.config.getdparam("dtout")? as Real
+                self.config.getdparam("dtout")? as f32
             };
 
             self.options = self.config.getparam("options")?;
 
             if !in_str.is_empty() {
                 self.inputdata()?;
+                self.refresh_derived();
             } else {
-                self.nbody = self.config.getiparam("nbody")?;
+                self.nbody = self.config.getiparam("nbody")? as usize;
                 if self.nbody < 1 {
-                    return Err(TreeError::AbsurdNbody(self.nbody));
+                    return Err(TreeError::AbsurdNbody(self.nbody as i32));
                 }
+                self.refresh_derived();
                 let seed = self.config.getiparam("seed")?;
                 let mut rng = rng::RngState::new(seed as u32);
                 self.testdata(&mut rng)?;
@@ -215,10 +231,10 @@ impl Tree {
             self.restorestate(&restore)?;
 
             if self.config.getparamstat("eps") & 0o4 != 0 {
-                self.eps = self.config.getdparam("eps")? as Real;
+                self.eps = self.config.getdparam("eps")? as f32;
             }
             if self.config.getparamstat("theta") & 0o4 != 0 {
-                self.theta = self.config.getdparam("theta")? as Real;
+                self.theta = self.config.getdparam("theta")? as f32;
             }
             if self.config.getparamstat("usequad") & 0o4 != 0 {
                 self.usequad = self.config.getbparam("usequad")? as u8;
@@ -227,28 +243,44 @@ impl Tree {
                 self.options = self.config.getparam("options")?;
             }
             if self.config.getparamstat("tstop") & 0o4 != 0 {
-                self.tstop = self.config.getdparam("tstop")? as Real;
+                self.tstop = self.config.getdparam("tstop")? as f32;
             }
 
             let dtout_str = self.config.getparam("dtout")?;
             self.dtout = if let Some((n, d)) = dtout_str.split_once('/') {
                 let n: f64 = n.parse().unwrap_or(0.0);
                 let d: f64 = d.parse().unwrap_or(1.0);
-                (n / d) as Real
+                (n / d) as f32
             } else {
-                self.config.getdparam("dtout")? as Real
+                self.config.getdparam("dtout")? as f32
             };
 
             let opts = self.config.getparam("options")?;
-            if crate::types::scanopt(&opts, "new-tout") {
+            if scanopt(&opts, "new-tout") {
                 self.tout = self.tnow + self.dtout;
             }
         }
+        self.refresh_derived();
         Ok(())
     }
 
+    /// Recompute run-constant derived values once `nbody`/`eps`/`dtime`/`theta`
+    /// are known. Each is a pure function of values that do not change during a
+    /// run, so computing them here (instead of per body / per force call) is
+    /// bit-identical to the original in-loop expressions.
+    fn refresh_derived(&mut self) {
+        // `1.0 / nbody` must stay a `double` division (C promotes the `1.0`
+        // literal to `double` and truncates back to `float` on each store), so
+        // `inv_nbody` is kept as `f64`.
+        self.inv_nbody = 1.0 / self.nbody as f64;
+        self.eps2 = self.eps * self.eps;
+        self.half_dt = 0.5 * self.dtime;
+        self.theta_pow_m2_5 = self.theta.powf(-2.5);
+        self.theta2 = self.theta * self.theta;
+    }
+
     fn testdata(&mut self, rng: &mut rng::RngState) -> Result<()> {
-        let nb = self.nbody as usize;
+        let nb = self.nbody;
 
         self.bodytab = (0..nb).map(|_| Body::new()).collect();
 
@@ -258,10 +290,12 @@ impl Tree {
         let mut rcm: Vector = Vector::zero();
         let mut vcm: Vector = Vector::zero();
 
-        for i in 0..nb {
-            let p = &mut self.bodytab[i];
+        // `self.inv_nbody` is the loop-invariant `1.0 / nbody` divisor, kept as
+        // `f64` (C promotes the `1.0` literal to `double` and truncates back to
+        // `float` on each store) — see `refresh_derived`.
+        for p in &mut self.bodytab {
             p.bodynode.node_type = BODY;
-            p.bodynode.mass = (1.0 / nb as f64) as Real;
+            p.bodynode.mass = self.inv_nbody as f32;
 
             let x_f = rng::xrandom(rng, 0.0, 0.999) as f32;
             let r = (1.0 / (x_f.powf(-2.0 / 3.0) - 1.0).sqrt() as f64) as f32;
@@ -285,13 +319,12 @@ impl Tree {
             rng::pickshell(rng, &mut p.vel, NDIM, vsc * v);
 
             for k in 0..NDIM {
-                rcm[k] = (rcm[k] as f64 + p.bodynode.pos[k] as f64 * (1.0 / nb as f64)) as f32;
-                vcm[k] = (vcm[k] as f64 + p.vel[k] as f64 * (1.0 / nb as f64)) as f32;
+                rcm[k] = (rcm[k] as f64 + p.bodynode.pos[k] as f64 * self.inv_nbody) as f32;
+                vcm[k] = (vcm[k] as f64 + p.vel[k] as f64 * self.inv_nbody) as f32;
             }
         }
 
-        for i in 0..nb {
-            let p = &mut self.bodytab[i];
+        for p in &mut self.bodytab {
             for k in 0..NDIM {
                 p.bodynode.pos[k] -= rcm[k];
                 p.vel[k] -= vcm[k];

@@ -3,25 +3,25 @@ use std::sync::Mutex;
 use crate::{
     error::{Result, TreeError},
     treecode::Tree,
-    types::{BODY, CELL, Interact, Matrix, NDIM, NSUB, NodeRef, Real, Vector, cputime},
+    types::{BODY, CELL, Interact, Matrix, NDIM, NSUB, NodeRef, Vector, cputime},
 };
 
-const FACTIVE: Real = 0.75;
+const FACTIVE: f32 = 0.75;
 
 /// Counters accumulated during the force walk. They are exact integer
 /// diagnostics (independent of the schedule), so they must match the C
 /// reference bit-for-bit even when the walk is parallelized.
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct WalkCounters {
-    actmax: i32,
-    nbbcalc: i32,
-    nbccalc: i32,
+    actmax: usize,
+    nbbcalc: usize,
+    nbccalc: usize,
 }
 
 /// Mutable, per-level state for the force walk, bundled into one object so every
 /// walk function takes a single context argument (keeps arity under the clippy
 /// `too_many_arguments` limit and the parallel fan-out closures short/flat).
-struct WalkCtx<'a> {
+struct WalkContext<'a> {
     active: &'a mut Vec<NodeRef>,
     interact: &'a mut Vec<Interact>,
     aptr: usize,
@@ -30,18 +30,18 @@ struct WalkCtx<'a> {
     bptr: usize,
     np: usize,
     p: NodeRef,
-    psize: Real,
+    psize: f32,
     pmid: Vector,
-    results: &'a Mutex<Vec<(Real, Vector)>>,
+    results: &'a Mutex<Vec<(f32, Vector)>>,
     counters: &'a Mutex<WalkCounters>,
     parallel: bool,
 }
 
 #[inline]
-fn next_midpoint(pmid: Vector, pos: Vector, poff: Real) -> Vector {
+fn next_midpoint(pmid: Vector, pos: Vector, poff: f32) -> Vector {
     let mut nmid = Vector::zero();
     for k in 0..NDIM {
-        let s = poff * (2.0 * usize::from(pos[k] >= pmid[k]) as Real - 1.0);
+        let s = poff * (2.0 * usize::from(pos[k] >= pmid[k]) as f32 - 1.0);
         nmid[k] = pmid[k] + s;
     }
     nmid
@@ -58,15 +58,14 @@ fn set_result(err_flag: &Mutex<Option<TreeError>>, r: Result<()>) {
 
 #[inline]
 fn sumnode(
-    eps: Real,
+    eps2: f32,
     interact: &[Interact],
     start: usize,
     finish: usize,
     pos0: Vector,
-    phi0: &mut Real,
+    phi0: &mut f32,
     acc0: &mut Vector,
 ) {
-    let eps2 = eps * eps;
     for c in &interact[start..finish] {
         let (dr, mut dr2) = separation(c, pos0);
         dr2 += eps2;
@@ -80,15 +79,14 @@ fn sumnode(
 
 #[inline]
 fn sumcell(
-    eps: Real,
+    eps2: f32,
     interact: &[Interact],
     start: usize,
     finish: usize,
     pos0: Vector,
-    phi0: &mut Real,
+    phi0: &mut f32,
     acc0: &mut Vector,
 ) {
-    let eps2 = eps * eps;
     for c in &interact[start..finish] {
         let (dr, mut dr2) = separation(c, pos0);
         dr2 += eps2;
@@ -105,9 +103,9 @@ fn sumcell(
 }
 
 #[inline]
-fn separation(c: &Interact, pos0: Vector) -> (Vector, Real) {
+fn separation(c: &Interact, pos0: Vector) -> (Vector, f32) {
     let mut dr = Vector::zero();
-    let mut dr2: Real = 0.0;
+    let mut dr2: f32 = 0.0;
     for k in 0..NDIM {
         dr[k] = c.pos[k] - pos0[k];
         dr2 += dr[k] * dr[k];
@@ -116,10 +114,10 @@ fn separation(c: &Interact, pos0: Vector) -> (Vector, Real) {
 }
 
 #[inline]
-fn quad_dot(c: &Interact, dr: &Vector) -> (Vector, Real) {
-    let quad = c.quad.unwrap_or(Matrix::zero());
+fn quad_dot(c: &Interact, dr: &Vector) -> (Vector, f32) {
+    let quad = c.quad;
     let mut qdr = Vector::zero();
-    let mut drqdr: Real = 0.0;
+    let mut drqdr: f32 = 0.0;
     for i in 0..NDIM {
         for j in 0..NDIM {
             qdr[i] += quad[i][j] * dr[j];
@@ -130,14 +128,14 @@ fn quad_dot(c: &Interact, dr: &Vector) -> (Vector, Real) {
 }
 
 #[inline(always)]
-fn add_mul_acc(acc0: &mut Vector, dr: &Vector, s: Real) {
+fn add_mul_acc(acc0: &mut Vector, dr: &Vector, s: f32) {
     for k in 0..NDIM {
         acc0[k] += dr[k] * s;
     }
 }
 
 #[inline(always)]
-fn add_mul_acc2(acc0: &mut Vector, dr: &Vector, s: Real, w: &Vector, r: Real) {
+fn add_mul_acc2(acc0: &mut Vector, dr: &Vector, s: f32, w: &Vector, r: f32) {
     for k in 0..NDIM {
         acc0[k] += dr[k] * s + w[k] * r;
     }
@@ -148,13 +146,9 @@ impl Tree {
         let rmid: Vector = Vector::zero();
 
         self.actlen = self.estimate_active_length();
-        let n = if self.actlen > 0 {
-            self.actlen as usize
-        } else {
-            1
-        };
-        let nb = self.nbody as usize;
-        let results = Mutex::new(vec![(0.0 as Real, Vector::zero()); nb]);
+        let n = if self.actlen > 0 { self.actlen } else { 1 };
+        let nb = self.nbody;
+        let results = Mutex::new(vec![(0.0, Vector::zero()); nb]);
         let counters = Mutex::new(WalkCounters::default());
         let cpustart = cputime()?;
         let root = self.root.ok_or(TreeError::TreeStructure)?;
@@ -174,7 +168,7 @@ impl Tree {
         interact.resize(n, Interact::default());
         active[0] = NodeRef::Cell(root);
 
-        let mut ctx = WalkCtx {
+        let mut ctx = WalkContext {
             active: &mut active,
             interact: &mut interact,
             aptr: 0,
@@ -191,33 +185,33 @@ impl Tree {
         };
         self.walktree(&mut ctx)?;
 
-        self.cpuforce = (cputime()? - cpustart) as Real;
+        self.cpuforce = (cputime()? - cpustart) as f32;
         let c = counters.into_inner().unwrap_or_default();
         self.actmax = c.actmax;
         self.nbbcalc = c.nbbcalc;
         self.nbccalc = c.nbccalc;
 
         let res = results.into_inner().unwrap_or_default();
-        for (b, (phi, acc)) in res.into_iter().enumerate() {
-            self.bodytab[b].phi = phi;
-            self.bodytab[b].acc = acc;
+        for (p, (phi, acc)) in self.bodytab.iter_mut().zip(res) {
+            p.phi = phi;
+            p.acc = acc;
         }
         Ok(())
     }
 
-    fn estimate_active_length(&self) -> i32 {
-        let base = (FACTIVE * 216.0 * self.tdepth as Real) as i32;
-        (base as Real * self.theta.powf(-2.5)) as i32
+    fn estimate_active_length(&self) -> usize {
+        let base = (FACTIVE * 216.0 * self.tdepth as f32) as usize;
+        (base as f32 * self.theta_pow_m2_5) as usize
     }
 
     #[inline]
-    fn walktree(&self, ctx: &mut WalkCtx) -> Result<()> {
+    fn walktree(&self, ctx: &mut WalkContext) -> Result<()> {
         let pnode = *self.node(ctx.p);
         if pnode.update == 0 {
             return Ok(());
         }
         let mut np = ctx.nptr;
-        let actsafe = self.actlen - NSUB as i32;
+        let actsafe = self.actlen - NSUB;
         let mut cptr = ctx.cptr;
         let mut bptr = ctx.bptr;
         let mut ap = ctx.aptr;
@@ -232,8 +226,8 @@ impl Tree {
             ap += 1;
         }
         if let Ok(mut c) = ctx.counters.lock() {
-            if (np as i32) > c.actmax {
-                c.actmax = np as i32;
+            if np > c.actmax {
+                c.actmax = np;
             }
         }
         if np != ctx.nptr {
@@ -252,9 +246,9 @@ impl Tree {
     #[inline]
     fn process_cell_node(
         &self,
-        ctx: &mut WalkCtx,
+        ctx: &mut WalkContext,
         apnode: NodeRef,
-        actsafe: i32,
+        actsafe: usize,
         np: &mut usize,
         cptr: &mut usize,
     ) -> Result<()> {
@@ -267,32 +261,34 @@ impl Tree {
             let mass = c.cellnode.mass;
             let pos = c.cellnode.pos;
             let quad = if self.usequad != 0 {
-                Some(c.sorq.quad())
+                c.sorq.quad()
             } else {
-                None
+                Matrix::zero()
             };
             ctx.interact[*cptr].mass = mass;
             ctx.interact[*cptr].pos = pos;
             ctx.interact[*cptr].quad = quad;
             *cptr += 1;
         } else {
-            if *np as i32 >= actsafe {
+            if *np >= actsafe {
                 return Err(TreeError::ActiveListOverflow);
             }
             let pnext = self.node(apnode).next;
             let mut q = self.cells[cid].more;
             while q != pnext {
-                let qr = q.ok_or(TreeError::TreeStructure)?;
-                ctx.active[*np] = qr;
+                if q.is_none() {
+                    return Err(TreeError::TreeStructure);
+                }
+                ctx.active[*np] = q;
                 *np += 1;
-                q = self.node(qr).next;
+                q = self.node(q).next;
             }
         }
         Ok(())
     }
 
     #[inline]
-    fn process_body_node(&self, ctx: &mut WalkCtx, apnode: NodeRef, bptr: &mut usize) {
+    fn process_body_node(&self, ctx: &mut WalkContext, apnode: NodeRef, bptr: &mut usize) {
         *bptr -= 1;
         let (mass, pos) = match apnode {
             NodeRef::Body(b) => (self.bodytab[b].bodynode.mass, self.bodytab[b].bodynode.pos),
@@ -303,10 +299,10 @@ impl Tree {
     }
 
     #[inline]
-    fn accept(&self, c: NodeRef, psize: Real, pmid: Vector) -> bool {
+    fn accept(&self, c: NodeRef, psize: f32, pmid: Vector) -> bool {
         let cn = self.node(c);
         let mut dmax = psize;
-        let mut dsq: Real = 0.0;
+        let mut dsq: f32 = 0.0;
         for k in 0..NDIM {
             let dk = (cn.pos[k] - pmid[k]).abs();
             dmax = dmax.max(dk);
@@ -322,7 +318,7 @@ impl Tree {
         dsq > rcrit2 && dmax > 1.5 * psize
     }
 
-    fn walksub(&self, ctx: &mut WalkCtx) -> Result<()> {
+    fn walksub(&self, ctx: &mut WalkContext) -> Result<()> {
         let poff = ctx.psize / 4.0;
         let pnode = *self.node(ctx.p);
         if let NodeRef::Cell(pid) = ctx.p {
@@ -330,9 +326,11 @@ impl Tree {
             let mut q = self.cells[pid].more;
             let mut children = Vec::with_capacity(NSUB);
             while q != pnext {
-                let qr = q.ok_or(TreeError::TreeStructure)?;
-                children.push(qr);
-                q = self.node(qr).next;
+                if q.is_none() {
+                    return Err(TreeError::TreeStructure);
+                }
+                children.push(q);
+                q = self.node(q).next;
             }
             if ctx.parallel {
                 self.fan_out_parallel(&children, ctx)?;
@@ -352,11 +350,11 @@ impl Tree {
     }
 
     #[inline]
-    fn walk_sequential(&self, children: &[NodeRef], ctx: &mut WalkCtx) -> Result<()> {
+    fn walk_sequential(&self, children: &[NodeRef], ctx: &mut WalkContext) -> Result<()> {
         let poff = ctx.psize / 4.0;
         for qr in children {
             let nmid = next_midpoint(ctx.pmid, self.node(*qr).pos, poff);
-            let mut child = WalkCtx {
+            let mut child = WalkContext {
                 active: &mut *ctx.active,
                 interact: &mut *ctx.interact,
                 aptr: ctx.nptr,
@@ -377,12 +375,12 @@ impl Tree {
     }
 
     #[inline]
-    fn fan_out_parallel(&self, children: &[NodeRef], ctx: &WalkCtx) -> Result<()> {
+    fn fan_out_parallel(&self, children: &[NodeRef], ctx: &WalkContext) -> Result<()> {
         self.walk_parallel(children, ctx)
     }
 
     #[inline]
-    fn walk_parallel(&self, children: &[NodeRef], ctx: &WalkCtx) -> Result<()> {
+    fn walk_parallel(&self, children: &[NodeRef], ctx: &WalkContext) -> Result<()> {
         let err_flag = Mutex::new(None::<TreeError>);
         std::thread::scope(|s| {
             for qr in children {
@@ -396,8 +394,8 @@ impl Tree {
     }
 
     #[inline]
-    fn run_child_walk(&self, qr: NodeRef, ctx: &WalkCtx, err_flag: &Mutex<Option<TreeError>>) {
-        let actlen = self.actlen as usize;
+    fn run_child_walk(&self, qr: NodeRef, ctx: &WalkContext, err_flag: &Mutex<Option<TreeError>>) {
+        let actlen = self.actlen;
         let poff = ctx.psize / 4.0;
         let nmid = next_midpoint(ctx.pmid, self.node(qr).pos, poff);
         let mut active2 = Vec::new();
@@ -415,7 +413,7 @@ impl Tree {
         interact2.resize(actlen, Interact::default());
         interact2[0..ctx.cptr].copy_from_slice(&ctx.interact[0..ctx.cptr]);
         interact2[ctx.bptr..actlen].copy_from_slice(&ctx.interact[ctx.bptr..actlen]);
-        let mut child = WalkCtx {
+        let mut child = WalkContext {
             active: &mut active2,
             interact: &mut interact2,
             aptr: 0,
@@ -439,44 +437,44 @@ impl Tree {
         p0: NodeRef,
         cptr: usize,
         bptr: usize,
-        results: &Mutex<Vec<(Real, Vector)>>,
+        results: &Mutex<Vec<(f32, Vector)>>,
         counters: &Mutex<WalkCounters>,
     ) {
         let pos0 = match p0 {
             NodeRef::Body(b) => self.bodytab[b].bodynode.pos,
             _ => unreachable!(),
         };
-        let eps = self.eps;
+        let eps2 = self.eps2;
         let usequad = self.usequad != 0;
-        let actlen = self.actlen as usize;
-        let mut phi0: Real = 0.0;
+        let actlen = self.actlen;
+        let mut phi0: f32 = 0.0;
         let mut acc0: Vector = Vector::zero();
         if usequad {
-            sumcell(eps, interact, 0, cptr, pos0, &mut phi0, &mut acc0);
+            sumcell(eps2, interact, 0, cptr, pos0, &mut phi0, &mut acc0);
         } else {
-            sumnode(eps, interact, 0, cptr, pos0, &mut phi0, &mut acc0);
+            sumnode(eps2, interact, 0, cptr, pos0, &mut phi0, &mut acc0);
         }
-        sumnode(eps, interact, bptr, actlen, pos0, &mut phi0, &mut acc0);
+        sumnode(eps2, interact, bptr, actlen, pos0, &mut phi0, &mut acc0);
         if let NodeRef::Body(b) = p0 {
             if let Ok(mut g) = results.lock() {
                 g[b] = (phi0, acc0);
             }
             if let Ok(mut c) = counters.lock() {
-                c.nbbcalc += actlen as i32 - bptr as i32;
-                c.nbccalc += cptr as i32;
+                c.nbbcalc += actlen - bptr;
+                c.nbccalc += cptr;
             }
         }
     }
 
-    pub fn force_max_active(&self) -> i32 {
+    pub fn force_max_active(&self) -> usize {
         self.actmax
     }
 
-    pub fn force_bb_calc(&self) -> i32 {
+    pub fn force_bb_calc(&self) -> usize {
         self.nbbcalc
     }
 
-    pub fn force_bc_calc(&self) -> i32 {
+    pub fn force_bc_calc(&self) -> usize {
         self.nbccalc
     }
 

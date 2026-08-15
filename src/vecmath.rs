@@ -12,64 +12,63 @@ use std::ops::{
     Add, AddAssign, Deref, DerefMut, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign,
 };
 
-pub type Real = f32;
 pub const NDIM: usize = 3;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct Vector(pub [Real; NDIM]);
+pub struct Vector(pub [f32; NDIM]);
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct Matrix(pub [[Real; NDIM]; NDIM]);
+pub struct Matrix(pub [[f32; NDIM]; NDIM]);
 
 // ---------------------------------------------------------------------
 // Array interop: ergonomic conversion and comparison with raw arrays.
 // ---------------------------------------------------------------------
 
-impl From<[Real; NDIM]> for Vector {
-    fn from(v: [Real; NDIM]) -> Self {
+impl From<[f32; NDIM]> for Vector {
+    fn from(v: [f32; NDIM]) -> Self {
         Self(v)
     }
 }
 
-impl From<Vector> for [Real; NDIM] {
+impl From<Vector> for [f32; NDIM] {
     fn from(v: Vector) -> Self {
         v.0
     }
 }
 
-impl PartialEq<[Real; NDIM]> for Vector {
-    fn eq(&self, other: &[Real; NDIM]) -> bool {
+impl PartialEq<[f32; NDIM]> for Vector {
+    fn eq(&self, other: &[f32; NDIM]) -> bool {
         self.0 == *other
     }
 }
 
-impl PartialEq<Vector> for [Real; NDIM] {
+impl PartialEq<Vector> for [f32; NDIM] {
     fn eq(&self, other: &Vector) -> bool {
         *self == other.0
     }
 }
 
-impl From<[[Real; NDIM]; NDIM]> for Matrix {
-    fn from(m: [[Real; NDIM]; NDIM]) -> Self {
+impl From<[[f32; NDIM]; NDIM]> for Matrix {
+    fn from(m: [[f32; NDIM]; NDIM]) -> Self {
         Self(m)
     }
 }
 
-impl From<Matrix> for [[Real; NDIM]; NDIM] {
+impl From<Matrix> for [[f32; NDIM]; NDIM] {
     fn from(m: Matrix) -> Self {
         m.0
     }
 }
 
-impl PartialEq<[[Real; NDIM]; NDIM]> for Matrix {
-    fn eq(&self, other: &[[Real; NDIM]; NDIM]) -> bool {
+impl PartialEq<[[f32; NDIM]; NDIM]> for Matrix {
+    fn eq(&self, other: &[[f32; NDIM]; NDIM]) -> bool {
         self.0 == *other
     }
 }
 
-impl PartialEq<Matrix> for [[Real; NDIM]; NDIM] {
+impl PartialEq<Matrix> for [[f32; NDIM]; NDIM] {
     fn eq(&self, other: &Matrix) -> bool {
         *self == other.0
     }
@@ -80,7 +79,7 @@ impl PartialEq<Matrix> for [[Real; NDIM]; NDIM] {
 // ---------------------------------------------------------------------
 
 impl Deref for Vector {
-    type Target = [Real; NDIM];
+    type Target = [f32; NDIM];
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -93,20 +92,20 @@ impl DerefMut for Vector {
     }
 }
 
-impl AsRef<[Real]> for Vector {
-    fn as_ref(&self) -> &[Real] {
+impl AsRef<[f32]> for Vector {
+    fn as_ref(&self) -> &[f32] {
         &self.0
     }
 }
 
-impl AsMut<[Real]> for Vector {
-    fn as_mut(&mut self) -> &mut [Real] {
+impl AsMut<[f32]> for Vector {
+    fn as_mut(&mut self) -> &mut [f32] {
         &mut self.0
     }
 }
 
 impl Deref for Matrix {
-    type Target = [[Real; NDIM]; NDIM];
+    type Target = [[f32; NDIM]; NDIM];
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -120,8 +119,8 @@ impl DerefMut for Matrix {
 }
 
 impl<'a> IntoIterator for &'a Vector {
-    type Item = &'a Real;
-    type IntoIter = std::slice::Iter<'a, Real>;
+    type Item = &'a f32;
+    type IntoIter = std::slice::Iter<'a, f32>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
@@ -129,8 +128,8 @@ impl<'a> IntoIterator for &'a Vector {
 }
 
 impl<'a> IntoIterator for &'a Matrix {
-    type Item = &'a [Real; NDIM];
-    type IntoIter = std::slice::Iter<'a, [Real; NDIM]>;
+    type Item = &'a [f32; NDIM];
+    type IntoIter = std::slice::Iter<'a, [f32; NDIM]>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
@@ -177,10 +176,10 @@ impl Neg for Vector {
     }
 }
 
-impl Mul<Real> for Vector {
+impl Mul<f32> for Vector {
     type Output = Self;
 
-    fn mul(self, s: Real) -> Self {
+    fn mul(self, s: f32) -> Self {
         let mut v = Self::default();
         for i in 0..NDIM {
             v[i] = self[i] * s;
@@ -189,7 +188,7 @@ impl Mul<Real> for Vector {
     }
 }
 
-impl Mul<Vector> for Real {
+impl Mul<Vector> for f32 {
     type Output = Vector;
 
     fn mul(self, v: Vector) -> Vector {
@@ -197,10 +196,10 @@ impl Mul<Vector> for Real {
     }
 }
 
-impl Div<Real> for Vector {
+impl Div<f32> for Vector {
     type Output = Self;
 
-    fn div(self, s: Real) -> Self {
+    fn div(self, s: f32) -> Self {
         let mut v = Self::default();
         for i in 0..NDIM {
             v[i] = self[i] / s;
@@ -221,14 +220,14 @@ impl SubAssign for Vector {
     }
 }
 
-impl MulAssign<Real> for Vector {
-    fn mul_assign(&mut self, s: Real) {
+impl MulAssign<f32> for Vector {
+    fn mul_assign(&mut self, s: f32) {
         *self = *self * s;
     }
 }
 
-impl DivAssign<Real> for Vector {
-    fn div_assign(&mut self, s: Real) {
+impl DivAssign<f32> for Vector {
+    fn div_assign(&mut self, s: f32) {
         *self = *self / s;
     }
 }
@@ -301,10 +300,10 @@ impl Mul<Vector> for Matrix {
     }
 }
 
-impl Mul<Real> for Matrix {
+impl Mul<f32> for Matrix {
     type Output = Self;
 
-    fn mul(self, s: Real) -> Self {
+    fn mul(self, s: f32) -> Self {
         let mut p = Self::default();
         for i in 0..NDIM {
             for j in 0..NDIM {
@@ -321,8 +320,8 @@ impl AddAssign for Matrix {
     }
 }
 
-impl MulAssign<Real> for Matrix {
-    fn mul_assign(&mut self, s: Real) {
+impl MulAssign<f32> for Matrix {
+    fn mul_assign(&mut self, s: f32) {
         *self = *self * s;
     }
 }
@@ -352,17 +351,17 @@ impl Vector {
     }
 
     /// MULVS: multiply by a scalar.
-    pub fn mul_scalar(self, s: Real) -> Self {
+    pub fn mul_scalar(self, s: f32) -> Self {
         self * s
     }
 
     /// DIVVS: divide by a scalar.
-    pub fn div_scalar(self, s: Real) -> Self {
+    pub fn div_scalar(self, s: f32) -> Self {
         self / s
     }
 
     /// DOTVP: dot product.
-    pub fn dot(self, u: Self) -> Real {
+    pub fn dot(self, u: Self) -> f32 {
         let mut s = 0.0;
         for i in 0..NDIM {
             s += self[i] * u[i];
@@ -371,12 +370,12 @@ impl Vector {
     }
 
     /// ABSV: length (`rsqrt` == `sqrt` in single precision).
-    pub fn length(self) -> Real {
+    pub fn length(self) -> f32 {
         self.dot(self).sqrt()
     }
 
     /// DISTV: distance to another vector.
-    pub fn distance(self, v: Self) -> Real {
+    pub fn distance(self, v: Self) -> f32 {
         let mut tmp = 0.0;
         for i in 0..NDIM {
             let d = self[i] - v[i];
@@ -395,14 +394,14 @@ impl Vector {
     }
 
     /// SETVS: set every component to `s`.
-    pub fn set_scalar(&mut self, s: Real) {
+    pub fn set_scalar(&mut self, s: f32) {
         for i in 0..NDIM {
             self[i] = s;
         }
     }
 
     /// ADDVS: replace `self` with `u + s` (per component).
-    pub fn add_scalar(&mut self, u: Self, s: Real) {
+    pub fn add_scalar(&mut self, u: Self, s: f32) {
         for i in 0..NDIM {
             self[i] = u[i] + s;
         }
@@ -447,12 +446,12 @@ impl Matrix {
     }
 
     /// MULMS: multiply by a scalar.
-    pub fn mul_scalar(self, s: Real) -> Self {
+    pub fn mul_scalar(self, s: f32) -> Self {
         self * s
     }
 
     /// DIVMS: divide by a scalar.
-    pub fn div_scalar(self, s: Real) -> Self {
+    pub fn div_scalar(self, s: f32) -> Self {
         let mut p = Self::default();
         for i in 0..NDIM {
             for j in 0..NDIM {
@@ -468,7 +467,7 @@ impl Matrix {
     }
 
     /// TRACEM: trace (sum of diagonal entries).
-    pub fn trace(self) -> Real {
+    pub fn trace(self) -> f32 {
         let mut s = 0.0;
         for i in 0..NDIM {
             s += self[i][i];
@@ -477,7 +476,7 @@ impl Matrix {
     }
 
     /// SETMS: set every entry to `s`.
-    pub fn set_scalar(&mut self, s: Real) {
+    pub fn set_scalar(&mut self, s: f32) {
         for i in 0..NDIM {
             for j in 0..NDIM {
                 self[i][j] = s;
@@ -496,7 +495,7 @@ pub fn vector_zero(v: &mut Vector) {
 }
 
 /// ABSV: length of a vector.
-pub fn vector_length(v: &Vector) -> Real {
+pub fn vector_length(v: &Vector) -> f32 {
     v.dot(*v).sqrt()
 }
 
@@ -523,7 +522,7 @@ pub fn outer_product(v: &Vector, u: &Vector) -> Matrix {
 
 /// DOTPSUBV: subtract vectors, form dot product.
 /// Returns `(s, v)` with `v = u - w` and `s = v·v`.
-pub fn dot_sub(u: &Vector, w: &Vector) -> (Real, Vector) {
+pub fn dot_sub(u: &Vector, w: &Vector) -> (f32, Vector) {
     let mut v = Vector::default();
     let mut s = 0.0;
     for i in 0..NDIM {
@@ -535,7 +534,7 @@ pub fn dot_sub(u: &Vector, w: &Vector) -> (Real, Vector) {
 
 /// DOTPMULMV: multiply matrix by vector, form dot product.
 /// Returns `(s, v)` with `v = p·u` and `s = v·u`.
-pub fn dot_mul_mat(p: &Matrix, u: &Vector) -> (Real, Vector) {
+pub fn dot_mul_mat(p: &Matrix, u: &Vector) -> (f32, Vector) {
     let mut v = Vector::default();
     let mut s = 0.0;
     for i in 0..NDIM {
@@ -546,14 +545,14 @@ pub fn dot_mul_mat(p: &Matrix, u: &Vector) -> (Real, Vector) {
 }
 
 /// ADDMULVS: `v += u * s`.
-pub fn add_mul_scalar(v: &mut Vector, u: &Vector, s: Real) {
+pub fn add_mul_scalar(v: &mut Vector, u: &Vector, s: f32) {
     for i in 0..NDIM {
         v[i] += u[i] * s;
     }
 }
 
 /// ADDMULVS2: `v += u * s + w * r`.
-pub fn add_mul_scalar2(v: &mut Vector, u: &Vector, s: Real, w: &Vector, r: Real) {
+pub fn add_mul_scalar2(v: &mut Vector, u: &Vector, s: f32, w: &Vector, r: f32) {
     for i in 0..NDIM {
         v[i] += u[i] * s + w[i] * r;
     }
@@ -569,11 +568,11 @@ mod tests {
     fn layout_is_array_compatible() {
         assert_eq!(
             std::mem::size_of::<Vector>(),
-            std::mem::size_of::<[Real; NDIM]>()
+            std::mem::size_of::<[f32; NDIM]>()
         );
         assert_eq!(
             std::mem::size_of::<Matrix>(),
-            std::mem::size_of::<[[Real; NDIM]; NDIM]>()
+            std::mem::size_of::<[[f32; NDIM]; NDIM]>()
         );
         assert_eq!(std::mem::size_of::<Matrix>(), 36);
     }

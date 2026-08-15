@@ -54,7 +54,7 @@ already sets `-C target-feature=-fma` in `.cargo/config.toml`.
   `hackquad`, `threadtree`.
 - `src/treegrav.rs` — force walk: `gravcalc`, `walktree`/`walksub`/`gravsum`,
   parallel fan‑out (`walk_parallel`/`run_child_walk`). Walk functions take a
-  single `WalkCtx<'a>` to stay under the clippy `too_many_arguments` limit.
+  single `WalkContext<'a>` to stay under the clippy `too_many_arguments` limit.
 - `src/treeio.rs` — `inputdata`, `output`/`outputdata`, `diagnostics`,
   `savestate`/`restorestate`. Prefer extending the injectable `*_to` writers
   over hardcoding `Write`/`Read` sinks.

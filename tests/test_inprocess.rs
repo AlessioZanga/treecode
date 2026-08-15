@@ -1,47 +1,23 @@
-use std::{os::unix::io::RawFd, path::Path};
-
-const STDOUT_FD: RawFd = 1;
-
-struct StdoutCapture {
-    saved: RawFd,
-}
-
-impl StdoutCapture {
-    fn new(dir: &Path) -> Self {
-        let saved = unsafe { libc::dup(STDOUT_FD) };
-        assert!(saved >= 0, "dup failed");
-        let path = dir.join("stdout.txt");
-        let file = std::fs::File::create(&path).unwrap();
-        let fd = std::os::unix::io::IntoRawFd::into_raw_fd(file);
-        unsafe {
-            libc::dup2(fd, STDOUT_FD);
-            libc::close(fd);
-        }
-        StdoutCapture { saved }
-    }
-}
-
-impl Drop for StdoutCapture {
-    fn drop(&mut self) {
-        unsafe {
-            libc::dup2(self.saved, STDOUT_FD);
-            libc::close(self.saved);
-        }
-    }
-}
+use std::{path::Path, process::Command};
 
 fn run_rust_in(dir: &Path, args: &[&str]) -> String {
     run_rust_with_prog(dir, "treecode", args)
 }
 
-fn run_rust_with_prog(dir: &Path, prog: &str, args: &[&str]) -> String {
-    let cap = StdoutCapture::new(dir);
-    let mut full: Vec<String> = vec![prog.to_string()];
-    full.extend(args.iter().map(|s| s.to_string()));
-    let refs: Vec<&str> = full.iter().map(|s| s.as_str()).collect();
-    treecode::treecode::run(&refs).unwrap();
-    drop(cap);
-    std::fs::read_to_string(dir.join("stdout.txt")).unwrap()
+fn run_rust_with_prog(dir: &Path, _prog: &str, args: &[&str]) -> String {
+    // Spawn the built binary and capture its stdout. This is cross-platform
+    // (unlike fd-1 redirection) and exercises the real `main` entry point.
+    let output = Command::new(env!("CARGO_BIN_EXE_treecode"))
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .expect("failed to run treecode binary");
+    assert!(
+        output.status.success(),
+        "treecode failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
 #[test]
@@ -160,12 +136,22 @@ fn inprocess_save_restore_roundtrip() {
     assert!(out1.contains("|T+U|"));
     assert!(save.exists(), "save file not created");
 
+    // Restore with a different `VERSION` than the one recorded in the save file
+    // so the "state file may be outdated" warning is emitted. This is portable:
+    // unlike the Unix fd-redirect approach, both runs spawn the real binary.
     let out2 = run_rust_with_prog(
         dir.path(),
         "restored",
-        &["nbody=40", "tstop=0.04", "dtout=0.01", &restore_str],
+        &[
+            "nbody=40",
+            "tstop=0.04",
+            "dtout=0.01",
+            "VERSION=2.0",
+            &restore_str,
+        ],
     );
     assert!(out2.contains("|T+U|"));
+    eprintln!("OUT2>>>\n{}<<<OUT2", out2);
     assert!(out2.contains("warning: state file may be outdated"));
 }
 

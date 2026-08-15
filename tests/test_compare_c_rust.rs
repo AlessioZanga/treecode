@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use std::{
     os::unix::io::RawFd,
     path::{Path, PathBuf},

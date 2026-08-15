@@ -7,7 +7,7 @@ use crate::{
     error::{Result, TreeError},
     getparam,
     treecode::Tree,
-    types::{BODY, Body, NDIM, Real, Vector},
+    types::{BODY, Body, NDIM, Vector, cputime, scanopt},
     vecmath::{matrix_zero, vector_zero},
 };
 
@@ -26,7 +26,7 @@ const E_WIDTH: usize = 14;
 /// sign (`E+00`/`E-05`). Rust's `{:>14.7E}` omits the sign and zero-pad for a
 /// zero exponent (`E0`), so the exponent must be re-emitted explicitly to stay
 /// byte-identical to the C output.
-fn fmt_e14(v: Real) -> String {
+fn fmt_e14(v: f32) -> String {
     let s = format!("{:.7E}", v);
     let (mant, exp) = s.split_once('E').unwrap_or((&s, "0"));
     let exp: i32 = exp.parse().unwrap_or(0);
@@ -40,7 +40,7 @@ fn fmt_e14(v: Real) -> String {
     out
 }
 
-fn parse_i32(toks: &[String], i: &mut usize) -> Result<i32> {
+fn parse_count(toks: &[String], i: &mut usize) -> Result<usize> {
     let s = toks.get(*i).ok_or(TreeError::InputIntConversion)?;
     *i += 1;
     s.parse().map_err(|_| TreeError::InputIntConversion)
@@ -56,7 +56,7 @@ fn out_int(f: &mut impl Write, v: i32) -> Result<()> {
     writeln!(f, " {}", v).map_err(|_| TreeError::WriteFailed)
 }
 
-fn out_real(f: &mut impl Write, v: Real) -> Result<()> {
+fn out_real(f: &mut impl Write, v: f32) -> Result<()> {
     writeln!(f, " {}", fmt_e14(v)).map_err(|_| TreeError::WriteFailed)
 }
 
@@ -73,7 +73,7 @@ fn write_int(f: &mut impl Write, v: i32) -> Result<()> {
     write_bytes(f, &v.to_ne_bytes())
 }
 
-fn write_real(f: &mut impl Write, v: Real) -> Result<()> {
+fn write_real(f: &mut impl Write, v: f32) -> Result<()> {
     write_bytes(f, &v.to_ne_bytes())
 }
 
@@ -93,10 +93,10 @@ fn read_int(f: &mut impl Read) -> Result<i32> {
     Ok(i32::from_ne_bytes(b))
 }
 
-fn read_real(f: &mut impl Read) -> Result<Real> {
+fn read_real(f: &mut impl Read) -> Result<f32> {
     let mut b = [0u8; 4];
     read_bytes(f, &mut b)?;
-    Ok(Real::from_ne_bytes(b))
+    Ok(f32::from_ne_bytes(b))
 }
 
 fn read_string(f: &mut impl Read) -> Result<String> {
@@ -114,42 +114,41 @@ impl Tree {
         let toks = self.read_input_tokens()?;
         let mut i = 0usize;
 
-        let nb = parse_i32(&toks, &mut i)?;
+        let nb = parse_count(&toks, &mut i)?;
         if nb < 1 {
-            return Err(TreeError::AbsurdNbody(nb));
+            return Err(TreeError::AbsurdNbody(nb as i32));
         }
-        let ndim = parse_i32(&toks, &mut i)?;
-        if ndim != NDIM as i32 {
+        let ndim = parse_count(&toks, &mut i)?;
+        if ndim != NDIM {
             return Err(TreeError::BadNdim {
-                got: ndim,
+                got: ndim as i32,
                 expected: NDIM,
             });
         }
-        let t = parse_f64(&toks, &mut i)? as Real;
+        let t = parse_f64(&toks, &mut i)? as f32;
 
         self.tnow = t;
         self.nbody = nb;
-        self.bodytab = (0..nb as usize).map(|_| Body::new()).collect();
+        self.bodytab = (0..nb).map(|_| Body::new()).collect();
 
         for body in &mut self.bodytab {
-            body.bodynode.mass = parse_f64(&toks, &mut i)? as Real;
+            body.bodynode.mass = parse_f64(&toks, &mut i)? as f32;
         }
         for body in &mut self.bodytab {
             for p in &mut body.bodynode.pos.0 {
-                *p = parse_f64(&toks, &mut i)? as Real;
+                *p = parse_f64(&toks, &mut i)? as f32;
             }
         }
         for body in &mut self.bodytab {
             for p in &mut body.vel.0 {
-                *p = parse_f64(&toks, &mut i)? as Real;
+                *p = parse_f64(&toks, &mut i)? as f32;
             }
         }
         for body in &mut self.bodytab {
             body.bodynode.node_type = BODY;
         }
 
-        let opts = self.options.clone();
-        if crate::types::scanopt(&opts, "reset-time") {
+        if scanopt(&self.options, "reset-time") {
             self.tnow = 0.0;
         }
         Ok(())
@@ -164,7 +163,7 @@ impl Tree {
 
     pub fn startoutput(&self) -> Result<()> {
         let use_quad_str = if self.usequad != 0 { "true" } else { "false" };
-        let opts = self.options.clone();
+        let opts = &self.options;
         let mut s = String::new();
         writeln!(s, "\n{}", self.headline).map_err(|_| TreeError::WriteFailed)?;
         writeln!(
@@ -209,12 +208,12 @@ impl Tree {
     pub fn output(&mut self) -> Result<()> {
         self.diagnostics();
 
-        let mut cmabs: Real = 0.0;
+        let mut cmabs: f32 = 0.0;
         for k in 0..NDIM {
             cmabs += self.cmvel[k] * self.cmvel[k];
         }
         cmabs = cmabs.sqrt();
-        let mut amabs: Real = 0.0;
+        let mut amabs: f32 = 0.0;
         for k in 0..NDIM {
             amabs += self.amvec[k] * self.amvec[k];
         }
@@ -237,7 +236,7 @@ impl Tree {
             -self.etot[1] / self.etot[2],
             cmabs,
             amabs,
-            crate::types::cputime()?
+            cputime()?
         )
         .map_err(|_| TreeError::WriteFailed)?;
         print!("{s}");
@@ -275,28 +274,27 @@ impl Tree {
     /// injectable core of [`Tree::outputdata`]; the binary opens the `out=`
     /// file and passes a `BufWriter`, while tests can capture into a `Vec<u8>`.
     pub fn outputdata_to(&self, f: &mut impl Write) -> Result<()> {
-        out_int(f, self.nbody)?;
+        out_int(f, self.nbody as i32)?;
         out_int(f, NDIM as i32)?;
         out_real(f, self.tnow)?;
-        let nb = self.nbody as usize;
-        for j in 0..nb {
-            out_real(f, self.bodytab[j].bodynode.mass)?;
+        for b in &self.bodytab {
+            out_real(f, b.bodynode.mass)?;
         }
-        for j in 0..nb {
-            out_vector(f, self.bodytab[j].bodynode.pos)?;
+        for b in &self.bodytab {
+            out_vector(f, b.bodynode.pos)?;
         }
-        for j in 0..nb {
-            out_vector(f, self.bodytab[j].vel)?;
+        for b in &self.bodytab {
+            out_vector(f, b.vel)?;
         }
-        let opts = self.options.clone();
-        if crate::types::scanopt(&opts, "out-phi") {
-            for j in 0..nb {
-                out_real(f, self.bodytab[j].phi)?;
+        let opts = &self.options;
+        if scanopt(opts, "out-phi") {
+            for b in &self.bodytab {
+                out_real(f, b.phi)?;
             }
         }
-        if crate::types::scanopt(&opts, "out-acc") {
-            for j in 0..nb {
-                out_vector(f, self.bodytab[j].acc)?;
+        if scanopt(opts, "out-acc") {
+            for b in &self.bodytab {
+                out_vector(f, b.acc)?;
             }
         }
         Ok(())
@@ -312,13 +310,11 @@ impl Tree {
         vector_zero(&mut self.cmpos);
         vector_zero(&mut self.cmvel);
 
-        let nb = self.nbody as usize;
-        for j in 0..nb {
-            let p = self.bodytab[j];
+        for p in &self.bodytab {
             let m = p.bodynode.mass;
             self.mtot += m;
 
-            let mut velsq: Real = 0.0;
+            let mut velsq: f32 = 0.0;
             for k in 0..NDIM {
                 velsq += p.vel[k] * p.vel[k];
             }
@@ -380,9 +376,9 @@ impl Tree {
         write_real(f, self.dtout)?;
         write_real(f, self.tnow)?;
         write_real(f, self.tout)?;
-        write_int(f, self.nstep)?;
+        write_int(f, self.nstep as i32)?;
         write_real(f, self.rsize)?;
-        write_int(f, self.nbody)?;
+        write_int(f, self.nbody as i32)?;
         self.write_bodytab(f)?;
         Ok(())
     }
@@ -438,11 +434,10 @@ impl Tree {
         self.dtout = read_real(f)?;
         self.tnow = read_real(f)?;
         self.tout = read_real(f)?;
-        self.nstep = read_int(f)?;
+        self.nstep = read_int(f)? as usize;
         self.rsize = read_real(f)?;
-        self.nbody = read_int(f)?;
-        let nb = self.nbody as usize;
-        self.bodytab = (0..nb).map(|_| Body::new()).collect();
+        self.nbody = read_int(f)? as usize;
+        self.bodytab = (0..self.nbody).map(|_| Body::new()).collect();
         for b in &mut self.bodytab {
             b.bodynode.node_type = read_int(f)? as i16;
             b.bodynode.update = read_int(f)? as i16;

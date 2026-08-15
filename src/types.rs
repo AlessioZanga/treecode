@@ -1,3 +1,4 @@
+#[cfg(not(target_os = "windows"))]
 pub fn cputime() -> Result<f64> {
     // Safe, dependency-free replacement for the C `times()` call. The process
     // CPU-time counters (utime + stime, in clock ticks) are read from
@@ -30,6 +31,17 @@ pub fn cputime() -> Result<f64> {
     Ok((utime + stime) / (60.0 * CLK_TCK))
 }
 
+#[cfg(target_os = "windows")]
+pub fn cputime() -> Result<f64> {
+    // Windows has no `/proc/self/stat`. The CPU-time column is normalized out
+    // of the byte-exact comparison, so a monotonic wall-clock measurement is
+    // sufficient: it stays non-negative and increases across calls.
+    use std::{sync::OnceLock, time::Instant};
+    static START: OnceLock<Instant> = OnceLock::new();
+    let start = START.get_or_init(Instant::now);
+    Ok(start.elapsed().as_secs_f64())
+}
+
 pub fn scanopt(opt: &str, key: &str) -> bool {
     for word in opt.split(',') {
         if word == key {
@@ -41,7 +53,7 @@ pub fn scanopt(opt: &str, key: &str) -> bool {
 
 pub use crate::{
     error::{Result, TreeError, eprintf, error},
-    vecmath::{Matrix, NDIM, Real, Vector},
+    vecmath::{Matrix, NDIM, Vector},
 };
 
 pub const BODY: i16 = 0o1;
@@ -56,10 +68,42 @@ pub type CellId = usize;
 /// A reference to either a body or a cell, replacing the C `*mut Node`
 /// discriminant-and-pointer pair. Both variants carry a plain index, so the
 /// tree can be stored in growable vectors instead of a heap of raw pointers.
+///
+/// The `None` variant is a sentinel used in place of `Option<NodeRef>` wherever
+/// a reference may be absent (the `next`/`more` links and the `subp` subcells).
+/// This keeps the link arrays flat (no `Option` niche overhead) and avoids the
+/// `Option` wrapper entirely.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeRef {
     Body(BodyId),
     Cell(CellId),
+    None,
+}
+
+impl NodeRef {
+    pub fn body(i: BodyId) -> Self {
+        NodeRef::Body(i)
+    }
+
+    pub fn cell(i: CellId) -> Self {
+        NodeRef::Cell(i)
+    }
+
+    pub fn is_none(&self) -> bool {
+        matches!(self, NodeRef::None)
+    }
+
+    pub fn is_cell(&self) -> bool {
+        matches!(self, NodeRef::Cell(_))
+    }
+
+    pub fn index(&self) -> usize {
+        match self {
+            NodeRef::Body(b) => *b,
+            NodeRef::Cell(c) => *c,
+            NodeRef::None => unreachable!("index() called on NodeRef::None"),
+        }
+    }
 }
 
 #[repr(C)]
@@ -67,9 +111,9 @@ pub enum NodeRef {
 pub struct Node {
     pub node_type: i16,
     pub update: i16,
-    pub mass: Real,
+    pub mass: f32,
     pub pos: Vector,
-    pub next: Option<NodeRef>,
+    pub next: NodeRef,
 }
 
 impl Default for Node {
@@ -79,7 +123,7 @@ impl Default for Node {
             update: 0,
             mass: 0.0,
             pos: Vector::zero(),
-            next: None,
+            next: NodeRef::None,
         }
     }
 }
@@ -96,7 +140,7 @@ pub struct Body {
     pub bodynode: Node,
     pub vel: Vector,
     pub acc: Vector,
-    pub phi: Real,
+    pub phi: f32,
 }
 
 impl Default for Body {
@@ -122,19 +166,19 @@ impl Body {
 /// like the original zeroed union.
 #[derive(Debug, Clone, Copy)]
 pub enum Sorq {
-    Subp([Option<NodeRef>; NSUB]),
+    Subp([NodeRef; NSUB]),
     Quad(Matrix),
 }
 
 impl Sorq {
-    pub fn subp(&self) -> &[Option<NodeRef>; NSUB] {
+    pub fn subp(&self) -> &[NodeRef; NSUB] {
         match self {
             Sorq::Subp(s) => s,
             Sorq::Quad(_) => panic!("Sorq::subp called on Quad variant"),
         }
     }
 
-    pub fn subp_mut(&mut self) -> &mut [Option<NodeRef>; NSUB] {
+    pub fn subp_mut(&mut self) -> &mut [NodeRef; NSUB] {
         match self {
             Sorq::Subp(s) => s,
             Sorq::Quad(_) => panic!("Sorq::subp_mut called on Quad variant"),
@@ -164,15 +208,15 @@ impl Sorq {
 
 impl Default for Sorq {
     fn default() -> Self {
-        Sorq::Subp([None; NSUB])
+        Sorq::Subp([NodeRef::None; NSUB])
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Cell {
     pub cellnode: Node,
-    pub rcrit2: Real,
-    pub more: Option<NodeRef>,
+    pub rcrit2: f32,
+    pub more: NodeRef,
     pub sorq: Sorq,
 }
 
@@ -181,7 +225,7 @@ impl Default for Cell {
         Cell {
             cellnode: Node::new(),
             rcrit2: 0.0,
-            more: None,
+            more: NodeRef::None,
             sorq: Sorq::default(),
         }
     }
@@ -189,9 +233,9 @@ impl Default for Cell {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Interact {
-    pub mass: Real,
+    pub mass: f32,
     pub pos: Vector,
-    pub quad: Option<Matrix>,
+    pub quad: Matrix,
 }
 
 impl Default for Interact {
@@ -199,7 +243,7 @@ impl Default for Interact {
         Interact {
             mass: 0.0,
             pos: Vector::zero(),
-            quad: None,
+            quad: Matrix::zero(),
         }
     }
 }
